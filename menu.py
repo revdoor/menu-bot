@@ -1,5 +1,4 @@
 import time
-import uuid
 from collections import defaultdict
 
 from selenium import webdriver
@@ -12,23 +11,28 @@ from selenium.webdriver.support.ui import WebDriverWait
 def get_driver():
     """Chrome WebDriver 인스턴스 생성"""
     chrome_options = Options()
-    chrome_options.add_argument("--headless")
+    chrome_options.add_argument("--headless=new")  # 새로운 headless 모드
     chrome_options.add_argument("--no-sandbox")
     chrome_options.add_argument("--disable-dev-shm-usage")
     chrome_options.add_argument("--disable-gpu")
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-software-rasterizer")
-
-    # 매번 고유한 user-data-dir 생성하여 충돌 방지
-    unique_dir = f'/tmp/chrome-data-{uuid.uuid4()}'
-    chrome_options.add_argument(f'--user-data-dir={unique_dir}')
-
-    # 추가 안정성 옵션
     chrome_options.add_argument("--single-process")
     chrome_options.add_argument("--disable-setuid-sandbox")
 
+    # user-data-dir 사용하지 않기
+    chrome_options.add_argument("--no-first-run")
+    chrome_options.add_argument("--no-default-browser-check")
+    chrome_options.add_argument("--disable-background-networking")
+
+    # 메모리 사용 최적화
+    chrome_options.add_argument("--disable-background-timer-throttling")
+    chrome_options.add_argument("--disable-renderer-backgrounding")
+    chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+
     try:
         driver = webdriver.Chrome(options=chrome_options)
+        driver.set_page_load_timeout(30)
         return driver
     except Exception as e:
         print(f"WebDriver 생성 실패: {e}")
@@ -38,13 +42,6 @@ def get_driver():
 def get_restaurants_menu(meal_type, restaurant_infos):
     """
     특정 meal_type에 해당하는 식당들의 메뉴를 가져옴
-
-    Args:
-        meal_type: str - 식사 종류 (중식, 석식)
-        restaurant_infos: List[Tuple[str, str]] - (식당 코드, 식당 이름) 리스트
-
-    Returns:
-        dict - {식당명: [메뉴들]} 형태의 딕셔너리
     """
     driver = None
     menu_infos = defaultdict(list)
@@ -97,11 +94,9 @@ def get_restaurants_menu(meal_type, restaurant_infos):
                                 meal_type_raw = headers[i]
                                 menu_content = cell.text.strip()
 
-                                # 해당 meal_type인지 확인
                                 if meal_type not in meal_type_raw:
                                     continue
 
-                                # 유효한 메뉴인지 확인
                                 if not menu_content or menu_content in ["", "-", "운영안함"]:
                                     continue
 
@@ -115,7 +110,7 @@ def get_restaurants_menu(meal_type, restaurant_infos):
                 print(f"{rest_name} - 처리 중 에러: {e}")
                 continue
 
-        return dict(menu_infos)  # defaultdict를 일반 dict로 변환
+        return dict(menu_infos)
 
     except Exception as e:
         print(f"전체 처리 실패: {e}")
@@ -133,12 +128,6 @@ def get_restaurants_menu(meal_type, restaurant_infos):
 def get_menus_by_meal_type(meal_type):
     """
     meal_type에 따라 해당하는 식당들의 메뉴를 조회
-
-    Args:
-        meal_type: str - '중식' 또는 '석식'
-
-    Returns:
-        dict - {식당명: [메뉴들]} 형태의 딕셔너리
     """
     restaurants_by_meal_type = {
         '중식': ['west', 'east1', 'east2'],
@@ -151,7 +140,6 @@ def get_menus_by_meal_type(meal_type):
         'east2': '동맛골(동측 교직원식당)'
     }
 
-    # 유효한 meal_type인지 확인
     if meal_type not in restaurants_by_meal_type:
         print(f"유효하지 않은 meal_type: {meal_type}")
         return {}
