@@ -120,26 +120,28 @@ async def on_ready():
     app_commands.Choice(name='석식', value='석식')
 ])
 async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str]):
-    # 먼저 "메뉴를 가져오는 중..." 메시지 전송
     await interaction.response.defer()
 
     try:
-        # 메뉴 데이터 가져오기
         meal_type = 종류.value
+        print(f"메뉴 요청: {meal_type}")  # 로그 추가
 
         menus = await get_menus_by_meal_type(meal_type)
+
+        print(f"메뉴 결과: {menus}")  # 로그 추가
+        print(f"메뉴 개수: {len(menus)}")  # 로그 추가
 
         if not menus:
             await interaction.followup.send("❌ 메뉴 정보를 가져오는데 실패했습니다. 잠시 후 다시 시도해주세요.")
             return
 
-        # Discord Embed 형식으로 변환
         embed = format_menu_for_discord(meal_type, menus)
-
-        # 메뉴 전송
         await interaction.followup.send(embed=embed)
 
     except Exception as e:
+        print(f"메뉴 조회 에러: {e}")  # 상세 에러 로그
+        import traceback
+        traceback.print_exc()  # 전체 스택 트레이스 출력
         await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
 
 
