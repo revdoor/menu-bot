@@ -86,7 +86,7 @@ async def ping():
     while not bot.is_closed():
         try:
             async with aiohttp.ClientSession() as s:
-                await s.get(os.environ['KOYEP_URL'])
+                await s.get(os.environ['KOYEB_URL'])
         except Exception as e:
             print(f'Ping 실패: {e}')
             pass
