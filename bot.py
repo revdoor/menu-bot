@@ -38,10 +38,13 @@ async def ping():
     while not bot.is_closed():
         try:
             async with aiohttp.ClientSession() as s:
-                await s.get(os.environ.get('KOYEB_URL', 'http://localhost:8000/health'))
+                response = await s.get(os.environ.get('KOYEB_URL', 'http://localhost:8000/health'))
+                if response.status == 200:
+                    print(f'✓ Ping 성공 ({response.status})')
+                else:
+                    print(f'⚠️ Ping 응답 이상: {response.status}')
         except Exception as e:
-            print(f'Ping 실패: {e}')
-            pass
+            print(f'❌ Ping 실패: {e}')
 
         await asyncio.sleep(180)
 
