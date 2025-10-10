@@ -9,6 +9,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from menu import get_menus_by_meal_type
+from menu import init_browser, close_browser
 
 
 def format_menu_for_discord(meal_type, menu_infos):
@@ -100,6 +101,8 @@ async def on_ready():
     print(f'{bot.user.name}으로 로그인했습니다!')
     print(f'봇 ID: {bot.user.id}')
 
+    await init_browser()
+
     try:
         synced = await bot.tree.sync()
         print(f'{len(synced)}개의 슬래시 명령어가 동기화되었습니다.')
@@ -140,9 +143,9 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
         await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
 
 
-# 봇 실행
-# with open('token.txt', 'r') as f:
-#     TOKEN = f.readline()
-#     bot.run(TOKEN)
+@bot.event
+async def on_close():
+    await close_browser()
+
 
 bot.run(os.environ['TOKEN'])
