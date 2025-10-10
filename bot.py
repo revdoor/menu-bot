@@ -1,5 +1,4 @@
 import os
-from datetime import datetime
 
 import discord
 import aiohttp
@@ -8,58 +7,7 @@ from aiohttp import web
 from discord import app_commands
 from discord.ext import commands
 
-from menu import get_menus_by_meal_type
-from menu import init_browser, close_browser
-
-
-def format_menu_for_discord(meal_type, menu_infos):
-    """Discord 메시지 형식으로 메뉴 포맷팅"""
-
-    meal_info = {
-        "조식": ("🌅 조식", "08:00-09:30"),
-        "중식": ("🍽️ 중식", "11:30-13:30"),
-        "석식": ("🌙 석식", "17:00-19:00")
-    }
-
-    emoji, time_range = meal_info.get(meal_type, ("🍴", ""))
-
-    embed = discord.Embed(
-        title=f"{emoji} KAIST 오늘의 식단",
-        description=f"**{meal_type}** ({time_range})\n{datetime.now().strftime('%Y년 %m월 %d일')}",
-        color=discord.Color.blue()
-    )
-
-    if not menu_infos:
-        embed.add_field(
-            name="❌ 운영 안함",
-            value="오늘은 운영하는 식당이 없습니다.",
-            inline=False
-        )
-        return embed
-
-    for restaurant, menus in menu_infos.items():
-        menu_text = ""
-        for menu in menus:
-            menu_lines = menu.split('\n')
-            for line in menu_lines:
-                line = line.strip()
-                if line and line not in ['-', '']:
-                    menu_text += f"• {line}\n"
-
-        if menu_text:
-            # Discord 필드는 1024자 제한이 있으므로 필요시 자르기
-            if len(menu_text) > 1024:
-                menu_text = menu_text[:1021] + "..."
-
-            embed.add_field(
-                name=f"📍 {restaurant}",
-                value=menu_text,
-                inline=False
-            )
-
-    embed.set_footer(text="KAIST 학생식당 • 메뉴는 사정에 따라 변경될 수 있습니다")
-
-    return embed
+from menu import get_menus_by_meal_type, format_menu_for_discord
 
 
 async def health_check(request):
@@ -81,22 +29,6 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
-
-# 브라우저 초기화 완료 플래그
-browser_ready = False
-
-
-async def initialize_browser():
-    """백그라운드에서 브라우저 초기화"""
-    global browser_ready
-    try:
-        print("초기화 시작...")
-        await init_browser()
-        browser_ready = True
-        print("초기화 완료!")
-    except Exception as e:
-        print(f"초기화 실패: {e}")
-        browser_ready = False
 
 
 async def ping():
@@ -130,7 +62,6 @@ async def on_ready():
     # 백그라운드 태스크 시작
     bot.loop.create_task(start_web_server())
     bot.loop.create_task(ping())
-    bot.loop.create_task(initialize_browser())  # 브라우저 초기화는 백그라운드에서
 
 
 @bot.tree.command(name='메뉴', description='오늘의 식단을 보여줍니다')
@@ -148,12 +79,6 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
         print(f"\n{'=' * 60}")
         print(f"메뉴 요청 받음: {meal_type} (사용자: {interaction.user.name})")
         print(f"{'=' * 60}")
-
-        # 브라우저가 아직 준비되지 않았다면 대기
-        if not browser_ready:
-            await interaction.followup.send("⏳ 봇이 아직 준비 중입니다. 잠시 후 다시 시도해주세요...")
-            print("브라우저 아직 준비 안됨")
-            return
 
         # 메뉴 데이터 가져오기
         print(f"메뉴 데이터 수집 시작...")
@@ -183,12 +108,6 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
             await interaction.followup.send(f"❌ 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
         except:
             pass
-
-
-@bot.event
-async def on_close():
-    print("봇 종료 중...")
-    await close_browser()
 
 
 # 봇 실행

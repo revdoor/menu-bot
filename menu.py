@@ -1,6 +1,10 @@
+from datetime import datetime
+
 import aiohttp
 import asyncio
 from collections import defaultdict
+
+import discord
 from bs4 import BeautifulSoup
 
 
@@ -124,14 +128,51 @@ async def get_menus_by_meal_type(meal_type):
     return await get_restaurants_menu_async(meal_type, restaurant_infos)
 
 
-# Playwright 관련 함수들 (호환성 유지 - 더미 함수)
-async def init_browser():
-    """더미 함수 - Playwright 사용 안 함"""
-    print("✓ 경량 버전: 브라우저 초기화 불필요")
-    return True
+def format_menu_for_discord(meal_type, menu_infos):
+    """Discord 메시지 형식으로 메뉴 포맷팅"""
 
+    meal_info = {
+        "조식": ("🌅 조식", "08:00-09:30"),
+        "중식": ("🍽️ 중식", "11:30-13:30"),
+        "석식": ("🌙 석식", "17:00-19:00")
+    }
 
-async def close_browser():
-    """더미 함수 - Playwright 사용 안 함"""
-    print("✓ 경량 버전: 브라우저 종료 불필요")
-    pass
+    emoji, time_range = meal_info.get(meal_type, ("🍴", ""))
+
+    embed = discord.Embed(
+        title=f"{emoji} KAIST 오늘의 식단",
+        description=f"**{meal_type}** ({time_range})\n{datetime.now().strftime('%Y년 %m월 %d일')}",
+        color=discord.Color.blue()
+    )
+
+    if not menu_infos:
+        embed.add_field(
+            name="❌ 운영 안함",
+            value="오늘은 운영하는 식당이 없습니다.",
+            inline=False
+        )
+        return embed
+
+    for restaurant, menus in menu_infos.items():
+        menu_text = ""
+        for menu in menus:
+            menu_lines = menu.split('\n')
+            for line in menu_lines:
+                line = line.strip()
+                if line and line not in ['-', '']:
+                    menu_text += f"• {line}\n"
+
+        if menu_text:
+            # Discord 필드는 1024자 제한이 있으므로 필요시 자르기
+            if len(menu_text) > 1024:
+                menu_text = menu_text[:1021] + "..."
+
+            embed.add_field(
+                name=f"📍 {restaurant}",
+                value=menu_text,
+                inline=False
+            )
+
+    embed.set_footer(text="KAIST 학생식당 • 메뉴는 사정에 따라 변경될 수 있습니다")
+
+    return embed
