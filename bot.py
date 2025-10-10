@@ -72,20 +72,21 @@ async def on_ready():
     app_commands.Choice(name='석식', value='석식')
 ])
 async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str]):
-    # 즉시 응답하여 3초 제한 회피
-    await interaction.response.defer()
-
     try:
+        # 약간의 딜레이 후 defer (타이밍 이슈 방지)
+        await asyncio.sleep(0.1)
+        await interaction.response.defer()
+
         meal_type = 종류.value
         print(f"\n{'=' * 60}")
         print(f"메뉴 요청 받음: {meal_type} (사용자: {interaction.user.name})")
         print(f"{'=' * 60}")
 
-        # 메뉴 데이터 가져오기
+        # 메뉴 데이터 가져오기 (캐싱 적용됨)
         print(f"메뉴 데이터 수집 시작...")
         menus = await get_menus_by_meal_type(meal_type)
 
-        print(f"메뉴 결과: {len(menus)}개 식당")
+        print(f"메뉴 결과: {len(menus)}개 식단")
         for rest, menu_list in menus.items():
             print(f"  - {rest}: {len(menu_list)}개 메뉴")
 
@@ -98,15 +99,21 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
 
         # 메뉴 전송
         await interaction.followup.send(embed=embed)
-        print("메뉴 전송 완료!")
+        print("✅ 메뉴 전송 완료!")
 
+    except discord.errors.NotFound:
+        # 인터랙션이 이미 만료된 경우
+        print("⚠️ 인터랙션 타이밍 에러 - 무시함")
     except Exception as e:
-        print(f"메뉴 조회 중 에러 발생: {e}")
+        print(f"❌ 메뉴 조회 중 에러 발생: {e}")
         import traceback
         traceback.print_exc()
 
         try:
-            await interaction.followup.send(f"❌ 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ 오류가 발생했습니다. 잠시 후 다시 시도해주세요.", ephemeral=True)
+            else:
+                await interaction.followup.send("❌ 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
         except:
             pass
 
