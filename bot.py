@@ -2,6 +2,8 @@ import os
 from datetime import datetime
 
 import discord
+import aiohttp
+import asyncio
 from aiohttp import web
 from discord import app_commands
 from discord.ext import commands
@@ -79,6 +81,19 @@ intents.message_content = True
 bot = commands.Bot(command_prefix='!', intents=intents)
 
 
+async def ping():
+    await bot.wait_until_ready()
+    while not bot.is_closed():
+        try:
+            async with aiohttp.ClientSession() as s:
+                await s.get(os.environ['KOYEP_URL'])
+        except Exception as e:
+            print(f'Ping 실패: {e}')
+            pass
+
+        await asyncio.sleep(180)
+
+
 # 봇이 준비되었을 때
 @bot.event
 async def on_ready():
@@ -91,6 +106,8 @@ async def on_ready():
     except Exception as e:
         print(f'동기화 실패: {e}')
     print('------')
+    bot.loop.create_task(start_web_server())
+    bot.loop.create_task(ping())
 
 
 @bot.tree.command(name='메뉴', description='오늘의 식단을 보여줍니다')
