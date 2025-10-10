@@ -73,7 +73,7 @@ async def on_ready():
 ])
 async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str]):
     # 즉시 응답하여 3초 제한 회피
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer()
 
     try:
         meal_type = 종류.value
@@ -114,7 +114,7 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
 @bot.tree.command(name='메뉴선택', description='메뉴 중에서 랜덤으로 하나를 골라드립니다')
 @app_commands.describe(메뉴들='쉼표(,)로 구분된 메뉴 이름들 (예: 짜장면, 짬뽕, 탕수육)')
 async def menu_select(interaction: discord.Interaction, 메뉴들: str):
-    await interaction.response.defer(thinking=True)
+    await interaction.response.defer()
 
     try:
         # 쉼표로 분리하고 공백 제거
