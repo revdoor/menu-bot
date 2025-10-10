@@ -1,11 +1,55 @@
-from datetime import datetime
-
 import aiohttp
 import asyncio
 from collections import defaultdict
-
-import discord
 from bs4 import BeautifulSoup
+from datetime import datetime, timezone, timedelta
+import discord
+
+# 한국 시간대
+KST = timezone(timedelta(hours=9))
+
+# 메뉴 캐시: {'2025-10-10': {'중식': {...}, '석식': {...}}}
+menu_cache = {}
+
+
+def get_kst_date():
+    """한국 시간 기준 오늘 날짜 문자열 반환"""
+    return datetime.now(KST).strftime('%Y-%m-%d')
+
+
+def clean_old_cache():
+    """오늘 날짜가 아닌 캐시 데이터 삭제"""
+    today = get_kst_date()
+    to_delete = [date for date in menu_cache.keys() if date != today]
+
+    for date in to_delete:
+        del menu_cache[date]
+        print(f"🗑️ 오래된 캐시 삭제: {date}")
+
+    if to_delete:
+        print(f"✓ {len(to_delete)}개의 오래된 캐시 삭제됨")
+
+
+def get_cached_menu(meal_type):
+    """캐시에서 메뉴 가져오기"""
+    today = get_kst_date()
+
+    if today in menu_cache and meal_type in menu_cache[today]:
+        print(f"💾 캐시에서 메뉴 로드: {today} - {meal_type}")
+        return menu_cache[today][meal_type]
+
+    return None
+
+
+def save_to_cache(meal_type, menu_data):
+    """메뉴를 캐시에 저장"""
+    today = get_kst_date()
+
+    if today not in menu_cache:
+        menu_cache[today] = {}
+
+    menu_cache[today][meal_type] = menu_data
+    print(f"💾 캐시에 저장: {today} - {meal_type}")
 
 
 async def get_restaurants_menu_async(meal_type, restaurant_infos):
