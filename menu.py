@@ -2,10 +2,13 @@ import time
 import os
 import signal
 import subprocess
+import tempfile
+import shutil
 from collections import defaultdict
 
 from selenium import webdriver
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.webdriver.support.ui import WebDriverWait
@@ -14,7 +17,6 @@ from selenium.webdriver.support.ui import WebDriverWait
 def kill_chrome_processes():
     """기존 Chrome 프로세스 모두 종료"""
     try:
-        # Chrome 프로세스 찾아서 종료
         subprocess.run(['pkill', '-9', 'chrome'], stderr=subprocess.DEVNULL)
         subprocess.run(['pkill', '-9', 'chromedriver'], stderr=subprocess.DEVNULL)
         time.sleep(1)
@@ -23,28 +25,14 @@ def kill_chrome_processes():
         print(f"Chrome 프로세스 종료 시도 중 에러 (무시 가능): {e}")
 
 
-def cleanup_temp_dirs():
-    """임시 디렉토리 정리"""
-    try:
-        import shutil
-        temp_pattern = '/tmp/chrome-data-*'
-        for temp_dir in subprocess.run(
-                ['find', '/tmp', '-maxdepth', '1', '-name', 'chrome-data-*'],
-                capture_output=True,
-                text=True
-        ).stdout.strip().split('\n'):
-            if temp_dir and os.path.exists(temp_dir):
-                shutil.rmtree(temp_dir, ignore_errors=True)
-        print("임시 디렉토리 정리 완료")
-    except Exception as e:
-        print(f"임시 디렉토리 정리 실패 (무시 가능): {e}")
-
-
 def get_driver():
     """Chrome WebDriver 인스턴스 생성"""
     # 기존 프로세스 정리
     kill_chrome_processes()
-    cleanup_temp_dirs()
+
+    # 임시 디렉토리 생성 (매번 새로 생성)
+    temp_dir = tempfile.mkdtemp(prefix='chrome_')
+    print(f"임시 디렉토리 생성: {temp_dir}")
 
     chrome_options = Options()
     chrome_options.add_argument("--headless=new")
@@ -55,35 +43,48 @@ def get_driver():
     chrome_options.add_argument("--disable-extensions")
     chrome_options.add_argument("--disable-setuid-sandbox")
 
-    # 메모리 최적화
+    # 명시적으로 임시 디렉토리 지정
+    chrome_options.add_argument(f"--user-data-dir={temp_dir}")
+    chrome_options.add_argument(f"--data-path={temp_dir}")
+    chrome_options.add_argument(f"--disk-cache-dir={temp_dir}/cache")
+
+    # 추가 최적화 옵션
     chrome_options.add_argument("--disable-background-networking")
     chrome_options.add_argument("--disable-default-apps")
     chrome_options.add_argument("--disable-sync")
     chrome_options.add_argument("--disable-translate")
+    chrome_options.add_argument("--hide-scrollbars")
     chrome_options.add_argument("--metrics-recording-only")
     chrome_options.add_argument("--mute-audio")
     chrome_options.add_argument("--no-first-run")
     chrome_options.add_argument("--safebrowsing-disable-auto-update")
+    chrome_options.add_argument("--ignore-certificate-errors")
+    chrome_options.add_argument("--ignore-ssl-errors")
 
-    # 캐시 및 데이터 디렉토리 설정
-    chrome_options.add_argument("--disk-cache-size=1")
-    chrome_options.add_argument("--media-cache-size=1")
+    # 메모리 제한
+    chrome_options.add_argument("--disable-background-timer-throttling")
+    chrome_options.add_argument("--disable-backgrounding-occluded-windows")
+    chrome_options.add_argument("--disable-renderer-backgrounding")
 
-    # user-data-dir 사용하지 않기
-    chrome_options.add_argument("--disable-features=TranslateUI")
-    chrome_options.add_argument("--disable-features=BlinkGenPropertyTrees")
+    # Remote debugging 포트 설정
+    chrome_options.add_argument("--remote-debugging-port=9222")
 
-    # Remote debugging 비활성화
-    chrome_options.add_argument("--remote-debugging-port=0")
+    # ChromeDriver 로그 비활성화
+    service = Service(log_path=os.devnull)
 
     try:
-        driver = webdriver.Chrome(options=chrome_options)
+        driver = webdriver.Chrome(service=service, options=chrome_options)
         driver.set_page_load_timeout(30)
         driver.set_script_timeout(30)
         print("WebDriver 생성 성공")
-        return driver
+        return driver, temp_dir
     except Exception as e:
         print(f"WebDriver 생성 실패: {e}")
+        # 실패 시 임시 디렉토리 정리
+        try:
+            shutil.rmtree(temp_dir, ignore_errors=True)
+        except:
+            pass
         raise
 
 
@@ -92,10 +93,11 @@ def get_restaurants_menu(meal_type, restaurant_infos):
     특정 meal_type에 해당하는 식당들의 메뉴를 가져옴
     """
     driver = None
+    temp_dir = None
     menu_infos = defaultdict(list)
 
     try:
-        driver = get_driver()
+        driver, temp_dir = get_driver()
         print("페이지 로딩 시작")
         driver.get("https://www.kaist.ac.kr/kr/html/campus/053001.html")
 
@@ -111,7 +113,7 @@ def get_restaurants_menu(meal_type, restaurant_infos):
 
                 # 식당 선택 (JavaScript 실행)
                 driver.execute_script(f"ActFodlst('{rest_code}')")
-                time.sleep(2.5)  # 조금 더 대기
+                time.sleep(2.5)
 
                 # 테이블 로드 대기
                 try:
@@ -171,6 +173,7 @@ def get_restaurants_menu(meal_type, restaurant_infos):
         return {}
 
     finally:
+        # WebDriver 종료
         if driver:
             try:
                 driver.quit()
@@ -178,9 +181,18 @@ def get_restaurants_menu(meal_type, restaurant_infos):
             except Exception as e:
                 print(f"WebDriver 종료 실패: {e}")
 
-            # 종료 후 프로세스 강제 종료 (안전장치)
-            time.sleep(0.5)
-            kill_chrome_processes()
+        # 임시 디렉토리 정리
+        if temp_dir and os.path.exists(temp_dir):
+            try:
+                time.sleep(0.5)
+                shutil.rmtree(temp_dir, ignore_errors=True)
+                print(f"임시 디렉토리 삭제: {temp_dir}")
+            except Exception as e:
+                print(f"임시 디렉토리 삭제 실패: {e}")
+
+        # 프로세스 강제 종료 (안전장치)
+        time.sleep(0.5)
+        kill_chrome_processes()
 
 
 def get_menus_by_meal_type(meal_type):
