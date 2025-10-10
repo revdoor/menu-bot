@@ -138,8 +138,8 @@ async def menu_select(interaction: discord.Interaction, 메뉴들: str):
             color=discord.Color.green()
         )
 
-        # 전체 메뉴 목록 표시
-        menu_list_text = "\n".join([f"{'✅ ' if m == selected else '　 '}{m}" for m in menu_list])
+        # 전체 메뉴 목록 표시 (체크 표시를 뒤로)
+        menu_list_text = "\n".join([f"{m} {'✅' if m == selected else ''}" for m in menu_list])
         embed.add_field(
             name="메뉴 목록",
             value=menu_list_text,
