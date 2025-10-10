@@ -112,16 +112,10 @@ async def get_restaurants_menu_async(meal_type, restaurant_infos):
             return {}
 
 
-def get_restaurants_menu(meal_type, restaurant_infos):
+# 동기 래퍼 함수 제거하고 비동기 함수만 유지
+async def get_menus_by_meal_type(meal_type):
     """
-    동기 래퍼 함수
-    """
-    return asyncio.run(get_restaurants_menu_async(meal_type, restaurant_infos))
-
-
-def get_menus_by_meal_type(meal_type):
-    """
-    meal_type에 따라 해당하는 식당들의 메뉴를 조회
+    meal_type에 따라 해당하는 식당들의 메뉴를 조회 (비동기)
     """
     restaurants_by_meal_type = {
         '중식': ['west', 'east1', 'east2'],
@@ -141,4 +135,4 @@ def get_menus_by_meal_type(meal_type):
     restaurants = restaurants_by_meal_type[meal_type]
     restaurant_infos = [(code, restaurant_names[code]) for code in restaurants]
 
-    return get_restaurants_menu(meal_type, restaurant_infos)
+    return await get_restaurants_menu_async(meal_type, restaurant_infos)

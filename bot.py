@@ -124,7 +124,7 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
         # 메뉴 데이터 가져오기
         meal_type = 종류.value
 
-        menus = get_menus_by_meal_type(meal_type)
+        menus = await get_menus_by_meal_type(meal_type)
 
         if not menus:
             await interaction.followup.send("❌ 메뉴 정보를 가져오는데 실패했습니다. 잠시 후 다시 시도해주세요.")
