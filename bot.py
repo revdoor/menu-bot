@@ -1,4 +1,5 @@
 import os
+import random
 
 import discord
 import aiohttp
@@ -7,7 +8,7 @@ from aiohttp import web
 from discord import app_commands
 from discord.ext import commands
 
-from menu import get_menus_by_meal_type, format_menu_for_discord
+from menu_collector import get_menus_by_meal_type, format_menu_for_discord
 
 
 async def health_check(request):
@@ -108,6 +109,60 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
             await interaction.followup.send(f"❌ 오류가 발생했습니다. 잠시 후 다시 시도해주세요.")
         except:
             pass
+
+
+@bot.tree.command(name='메뉴선택', description='메뉴 중에서 랜덤으로 하나를 골라드립니다')
+@app_commands.describe(메뉴들='쉼표(,)로 구분된 메뉴 이름들 (예: 짜장면, 짬뽕, 탕수육)')
+async def menu_select(interaction: discord.Interaction, 메뉴들: str):
+    await interaction.response.defer(thinking=True)
+
+    try:
+        # 쉼표로 분리하고 공백 제거
+        menu_list = [menu.strip() for menu in 메뉴들.split(',') if menu.strip()]
+
+        if not menu_list:
+            await interaction.followup.send("❌ 메뉴를 입력해주세요!\n예시: `/메뉴선택 짜장면, 짬뽕, 탕수육`")
+            return
+
+        if len(menu_list) == 1:
+            await interaction.followup.send(f"메뉴가 하나밖에 없네요! 🤔\n선택: **{menu_list[0]}** 🍽️")
+            return
+
+        # 랜덤 선택
+        selected = random.choice(menu_list)
+
+        # Embed로 예쁘게 표시
+        embed = discord.Embed(
+            title="🎲 메뉴 선택 결과",
+            description=f"고민 중인 메뉴: {len(menu_list)}개",
+            color=discord.Color.green()
+        )
+
+        # 전체 메뉴 목록 표시
+        menu_list_text = "\n".join([f"{'✅ ' if m == selected else '　 '}{m}" for m in menu_list])
+        embed.add_field(
+            name="메뉴 목록",
+            value=menu_list_text,
+            inline=False
+        )
+
+        # 선택된 메뉴 강조
+        embed.add_field(
+            name="🎯 오늘의 선택",
+            value=f"# {selected}",
+            inline=False
+        )
+
+        embed.set_footer(text=f"요청자: {interaction.user.display_name}")
+
+        await interaction.followup.send(embed=embed)
+        print(f"메뉴 선택: {메뉴들} → {selected}")
+
+    except Exception as e:
+        print(f"메뉴 선택 중 에러: {e}")
+        import traceback
+        traceback.print_exc()
+        await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
 
 
 # 봇 실행
