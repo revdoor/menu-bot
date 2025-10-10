@@ -11,9 +11,24 @@ async def init_browser():
     """브라우저 초기화 (봇 시작 시 한 번만 실행)"""
     global _playwright, _browser
 
-    if _browser is not None:
+    if _browser is not None and _browser.is_connected():
         print("브라우저 이미 초기화됨")
         return
+
+    # 기존 브라우저가 있지만 연결이 끊어진 경우 정리
+    if _browser is not None:
+        try:
+            await _browser.close()
+        except:
+            pass
+        _browser = None
+
+    if _playwright is not None:
+        try:
+            await _playwright.stop()
+        except:
+            pass
+        _playwright = None
 
     print("Playwright 브라우저 초기화 중...")
     _playwright = await async_playwright().start()
@@ -27,6 +42,20 @@ async def init_browser():
             '--no-zygote',
             '--single-process',
             '--disable-web-security',
+            '--disable-accelerated-2d-canvas',
+            '--disable-background-timer-throttling',
+            '--disable-backgrounding-occluded-windows',
+            '--disable-breakpad',
+            '--disable-component-extensions-with-background-pages',
+            '--disable-extensions',
+            '--disable-features=TranslateUI,BlinkGenPropertyTrees',
+            '--disable-ipc-flooding-protection',
+            '--disable-renderer-backgrounding',
+            '--enable-features=NetworkService,NetworkServiceInProcess',
+            '--force-color-profile=srgb',
+            '--hide-scrollbars',
+            '--metrics-recording-only',
+            '--mute-audio',
         ]
     )
     print("브라우저 초기화 완료")
@@ -37,12 +66,18 @@ async def close_browser():
     global _playwright, _browser
 
     if _browser:
-        await _browser.close()
+        try:
+            await _browser.close()
+        except:
+            pass
         _browser = None
         print("브라우저 종료됨")
 
     if _playwright:
-        await _playwright.stop()
+        try:
+            await _playwright.stop()
+        except:
+            pass
         _playwright = None
         print("Playwright 종료됨")
 
@@ -53,26 +88,37 @@ async def get_restaurants_menu_async(meal_type, restaurant_infos):
     """
     global _browser
 
-    # 브라우저가 초기화되지 않았으면 초기화
-    if _browser is None:
-        print("브라우저 초기화 필요")
+    # 브라우저 상태 확인 및 재초기화
+    if _browser is None or not _browser.is_connected():
+        print("브라우저 초기화 필요 (연결 끊김 또는 None)")
         await init_browser()
 
     menu_infos = defaultdict(list)
+    context = None
+    page = None
 
     try:
         # 새 컨텍스트와 페이지 생성
+        print("새 브라우저 컨텍스트 생성 중...")
         context = await _browser.new_context(
             viewport={'width': 1280, 'height': 720},
-            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'
+            user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
+            ignore_https_errors=True,
         )
 
+        print("새 페이지 생성 중...")
         page = await context.new_page()
 
+        # 타임아웃 설정
+        page.set_default_timeout(30000)
+        page.set_default_navigation_timeout(30000)
+
         print(f"페이지 로딩 시작 - meal_type: {meal_type}")
-        await page.goto("https://www.kaist.ac.kr/kr/html/campus/053001.html",
-                        wait_until='domcontentloaded',
-                        timeout=30000)
+        await page.goto(
+            "https://www.kaist.ac.kr/kr/html/campus/053001.html",
+            wait_until='domcontentloaded',
+            timeout=30000
+        )
 
         # 페이지 로드 대기
         await page.wait_for_selector(".s0503", timeout=15000)
@@ -85,7 +131,7 @@ async def get_restaurants_menu_async(meal_type, restaurant_infos):
 
                 # JavaScript 함수 실행
                 await page.evaluate(f"ActFodlst('{rest_code}')")
-                await asyncio.sleep(3)  # 약간 더 여유있게
+                await asyncio.sleep(3)
 
                 # 테이블 로드 대기
                 try:
@@ -121,22 +167,17 @@ async def get_restaurants_menu_async(meal_type, restaurant_infos):
 
                     for row_idx, row in enumerate(rows):
                         cells = await row.query_selector_all("td")
-                        print(f"  행 {row_idx} - 셀 개수: {len(cells)}")
 
                         for i, cell in enumerate(cells):
                             if i < len(headers):
                                 meal_type_raw = headers[i]
                                 menu_content = (await cell.inner_text()).strip()
 
-                                print(f"    셀 [{i}] - 헤더: '{meal_type_raw}', 내용 길이: {len(menu_content)}")
-
-                                # meal_type 매칭 확인 (대소문자 무시, 공백 제거)
+                                # meal_type 매칭 확인
                                 if meal_type not in meal_type_raw:
-                                    print(f"    -> meal_type '{meal_type}'이 '{meal_type_raw}'에 없음. 스킵")
                                     continue
 
                                 if not menu_content or menu_content in ["", "-", "운영안함"]:
-                                    print(f"    -> 빈 메뉴 또는 운영안함. 스킵")
                                     continue
 
                                 print(f"    -> ✓ 메뉴 추가: {menu_content[:50]}...")
@@ -156,8 +197,6 @@ async def get_restaurants_menu_async(meal_type, restaurant_infos):
                 traceback.print_exc()
                 continue
 
-        await context.close()
-
         result = dict(menu_infos)
         print(f"\n{'=' * 50}")
         print(f"최종 결과: {len(result)}개 식당")
@@ -171,6 +210,22 @@ async def get_restaurants_menu_async(meal_type, restaurant_infos):
         import traceback
         traceback.print_exc()
         return {}
+
+    finally:
+        # 리소스 정리
+        if page:
+            try:
+                await page.close()
+                print("페이지 닫힘")
+            except:
+                pass
+
+        if context:
+            try:
+                await context.close()
+                print("컨텍스트 닫힘")
+            except:
+                pass
 
 
 async def get_menus_by_meal_type(meal_type):
@@ -200,4 +255,21 @@ async def get_menus_by_meal_type(meal_type):
     print(f"대상 식당: {[name for _, name in restaurant_infos]}")
     print(f"{'=' * 50}")
 
-    return await get_restaurants_menu_async(meal_type, restaurant_infos)
+    # 재시도 로직 추가
+    max_retries = 2
+    for attempt in range(max_retries):
+        try:
+            result = await get_restaurants_menu_async(meal_type, restaurant_infos)
+            if result:  # 결과가 있으면 반환
+                return result
+            print(f"시도 {attempt + 1}/{max_retries}: 결과 없음")
+        except Exception as e:
+            print(f"시도 {attempt + 1}/{max_retries} 실패: {e}")
+            if attempt < max_retries - 1:
+                print("브라우저 재초기화 시도...")
+                await close_browser()
+                await asyncio.sleep(2)
+                await init_browser()
+                await asyncio.sleep(2)
+
+    return {}
