@@ -90,12 +90,12 @@ async def initialize_browser():
     """백그라운드에서 브라우저 초기화"""
     global browser_ready
     try:
-        print("브라우저 초기화 시작...")
+        print("초기화 시작...")
         await init_browser()
         browser_ready = True
-        print("브라우저 초기화 완료!")
+        print("초기화 완료!")
     except Exception as e:
-        print(f"브라우저 초기화 실패: {e}")
+        print(f"초기화 실패: {e}")
         browser_ready = False
 
 
