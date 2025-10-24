@@ -220,11 +220,15 @@ async def sticker_check(interaction: discord.Interaction, 메시지수: int = 50
         print(f"대상 채널: {[ch.name for ch in channels]}")
         print(f"{'=' * 60}")
 
+        # 서버 스티커 목록 가져오기
+        guild_stickers = await interaction.guild.fetch_stickers()
+        guild_sticker_ids = {sticker.id for sticker in guild_stickers}
+        print(f"서버 스티커 수: {len(guild_sticker_ids)}개")
+
         # 스티커 카운터
         sticker_counts = {}
         total_messages = 0
         messages_with_stickers = 0
-        guild_id = interaction.guild.id
 
         # 각 채널에서 메시지 읽기
         for channel in channels:
@@ -234,7 +238,7 @@ async def sticker_check(interaction: discord.Interaction, 메시지수: int = 50
                     if message.stickers:
                         for sticker in message.stickers:
                             # 서버 스티커만 포함 (Nitro 스티커 제외)
-                            if sticker.guild_id == guild_id:
+                            if sticker.id in guild_sticker_ids:
                                 messages_with_stickers += 1
                                 sticker_name = sticker.name
                                 sticker_counts[sticker_name] = sticker_counts.get(sticker_name, 0) + 1
