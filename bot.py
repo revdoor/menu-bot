@@ -175,6 +175,100 @@ async def menu_select(interaction: discord.Interaction, 메뉴들: str):
         await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
 
 
+@bot.tree.command(name='스티커체크', description='채널에서 사용된 스티커 통계를 보여줍니다')
+@app_commands.describe(메시지수='확인할 최근 메시지 수 (기본값: 500, 최대: 5000)')
+async def sticker_check(interaction: discord.Interaction, 메시지수: int = 500):
+    await interaction.response.defer()
+
+    try:
+        # 메시지 수 제한
+        limit = min(max(메시지수, 1), 5000)
+
+        print(f"\n{'=' * 60}")
+        print(f"스티커 체크 요청: 최근 {limit}개 메시지 (사용자: {interaction.user.name})")
+        print(f"{'=' * 60}")
+
+        # 스티커 카운터
+        sticker_counts = {}
+        total_messages = 0
+        messages_with_stickers = 0
+
+        # 채널 메시지 히스토리 읽기
+        channel = interaction.channel
+        async for message in channel.history(limit=limit):
+            total_messages += 1
+            if message.stickers:
+                messages_with_stickers += 1
+                for sticker in message.stickers:
+                    sticker_name = sticker.name
+                    sticker_counts[sticker_name] = sticker_counts.get(sticker_name, 0) + 1
+
+        # 결과가 없을 경우
+        if not sticker_counts:
+            embed = discord.Embed(
+                title="📊 스티커 사용 통계",
+                description=f"최근 {total_messages}개 메시지에서 스티커가 발견되지 않았습니다.",
+                color=discord.Color.blue()
+            )
+            await interaction.followup.send(embed=embed)
+            print("스티커 사용 없음")
+            return
+
+        # 사용 횟수로 정렬
+        sorted_stickers = sorted(sticker_counts.items(), key=lambda x: x[1], reverse=True)
+
+        # Embed 생성
+        embed = discord.Embed(
+            title="📊 스티커 사용 통계",
+            description=f"최근 {total_messages}개 메시지 분석 결과",
+            color=discord.Color.blue()
+        )
+
+        # 통계 정보
+        embed.add_field(
+            name="📈 요약",
+            value=f"스티커가 포함된 메시지: {messages_with_stickers}개\n서로 다른 스티커 종류: {len(sticker_counts)}개",
+            inline=False
+        )
+
+        # 스티커 목록 (최대 25개까지만 표시)
+        sticker_list_text = ""
+        for idx, (sticker_name, count) in enumerate(sorted_stickers[:25], 1):
+            # 막대 그래프 효과
+            bar_length = min(int(count / max(sticker_counts.values()) * 10), 10)
+            bar = "█" * bar_length
+            sticker_list_text += f"`{idx:2d}.` **{sticker_name}**: {count}회 {bar}\n"
+
+        embed.add_field(
+            name="🏆 스티커 순위",
+            value=sticker_list_text if sticker_list_text else "스티커 없음",
+            inline=False
+        )
+
+        # 나머지가 있으면 표시
+        if len(sorted_stickers) > 25:
+            embed.add_field(
+                name="ℹ️ 기타",
+                value=f"그 외 {len(sorted_stickers) - 25}개의 스티커가 더 있습니다.",
+                inline=False
+            )
+
+        embed.set_footer(text=f"요청자: {interaction.user.display_name}")
+
+        await interaction.followup.send(embed=embed)
+
+        print(f"✅ 스티커 통계 전송 완료!")
+        print(f"   - 총 메시지: {total_messages}")
+        print(f"   - 스티커 메시지: {messages_with_stickers}")
+        print(f"   - 스티커 종류: {len(sticker_counts)}")
+
+    except Exception as e:
+        print(f"❌ 스티커 체크 중 에러 발생: {e}")
+        import traceback
+        traceback.print_exc()
+        await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
+
+
 # 봇 실행
 if __name__ == "__main__":
     token = os.environ.get('TOKEN')
