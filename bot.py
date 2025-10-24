@@ -176,51 +176,94 @@ async def menu_select(interaction: discord.Interaction, 메뉴들: str):
 
 
 @bot.tree.command(name='스티커체크', description='채널에서 사용된 스티커 통계를 보여줍니다')
-@app_commands.describe(메시지수='확인할 최근 메시지 수 (기본값: 500, 최대: 5000)')
-async def sticker_check(interaction: discord.Interaction, 메시지수: int = 500):
+@app_commands.describe(
+    메시지수='확인할 최근 메시지 수 (기본값: 500, 최대: 5000)',
+    채널들='분석할 채널들 (쉼표로 구분, 기본값: 현재 채널)'
+)
+async def sticker_check(interaction: discord.Interaction, 메시지수: int = 500, 채널들: str = None):
     await interaction.response.defer()
 
     try:
         # 메시지 수 제한
         limit = min(max(메시지수, 1), 5000)
 
+        # 채널 파싱
+        channels = []
+        if 채널들:
+            # 쉼표로 분리하고 공백 제거
+            channel_mentions = [ch.strip() for ch in 채널들.split(',') if ch.strip()]
+
+            for mention in channel_mentions:
+                # <#123456789> 형태의 멘션에서 ID 추출
+                if mention.startswith('<#') and mention.endswith('>'):
+                    channel_id = mention[2:-1]
+                # 숫자만 있는 경우 (ID 직접 입력)
+                elif mention.isdigit():
+                    channel_id = mention
+                else:
+                    await interaction.followup.send(f"❌ 올바르지 않은 채널 형식: {mention}\n채널 멘션(#채널명) 또는 ID를 입력해주세요.")
+                    return
+
+                # 채널 가져오기
+                channel = interaction.guild.get_channel(int(channel_id))
+                if channel:
+                    channels.append(channel)
+                else:
+                    await interaction.followup.send(f"❌ 채널을 찾을 수 없습니다: {mention}")
+                    return
+        else:
+            # 채널 지정 안 했으면 현재 채널
+            channels = [interaction.channel]
+
         print(f"\n{'=' * 60}")
         print(f"스티커 체크 요청: 최근 {limit}개 메시지 (사용자: {interaction.user.name})")
+        print(f"대상 채널: {[ch.name for ch in channels]}")
         print(f"{'=' * 60}")
 
         # 스티커 카운터
         sticker_counts = {}
         total_messages = 0
         messages_with_stickers = 0
+        guild_id = interaction.guild.id
 
-        # 채널 메시지 히스토리 읽기
-        channel = interaction.channel
-        async for message in channel.history(limit=limit):
-            total_messages += 1
-            if message.stickers:
-                messages_with_stickers += 1
-                for sticker in message.stickers:
-                    sticker_name = sticker.name
-                    sticker_counts[sticker_name] = sticker_counts.get(sticker_name, 0) + 1
+        # 각 채널에서 메시지 읽기
+        for channel in channels:
+            try:
+                async for message in channel.history(limit=limit):
+                    total_messages += 1
+                    if message.stickers:
+                        for sticker in message.stickers:
+                            # 서버 스티커만 포함 (Nitro 스티커 제외)
+                            if sticker.guild_id == guild_id:
+                                messages_with_stickers += 1
+                                sticker_name = sticker.name
+                                sticker_counts[sticker_name] = sticker_counts.get(sticker_name, 0) + 1
+            except discord.Forbidden:
+                await interaction.followup.send(f"❌ {channel.mention} 채널을 읽을 권한이 없습니다.")
+                return
+            except Exception as e:
+                print(f"채널 {channel.name} 읽기 중 에러: {e}")
 
         # 결과가 없을 경우
         if not sticker_counts:
+            channel_list = ", ".join([ch.mention for ch in channels])
             embed = discord.Embed(
                 title="📊 스티커 사용 통계",
-                description=f"최근 {total_messages}개 메시지에서 스티커가 발견되지 않았습니다.",
+                description=f"{channel_list}\n최근 {total_messages}개 메시지에서 서버 스티커가 발견되지 않았습니다.",
                 color=discord.Color.blue()
             )
             await interaction.followup.send(embed=embed)
-            print("스티커 사용 없음")
+            print("서버 스티커 사용 없음")
             return
 
         # 사용 횟수로 정렬
         sorted_stickers = sorted(sticker_counts.items(), key=lambda x: x[1], reverse=True)
 
         # Embed 생성
+        channel_list = ", ".join([ch.mention for ch in channels])
         embed = discord.Embed(
             title="📊 스티커 사용 통계",
-            description=f"최근 {total_messages}개 메시지 분석 결과",
+            description=f"**분석 채널**: {channel_list}\n**메시지 수**: {total_messages}개 (채널당 최대 {limit}개)",
             color=discord.Color.blue()
         )
 
@@ -253,7 +296,7 @@ async def sticker_check(interaction: discord.Interaction, 메시지수: int = 50
                 inline=False
             )
 
-        embed.set_footer(text=f"요청자: {interaction.user.display_name}")
+        embed.set_footer(text=f"요청자: {interaction.user.display_name} | 서버 스티커만 포함")
 
         await interaction.followup.send(embed=embed)
 
