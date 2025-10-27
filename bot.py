@@ -1,5 +1,6 @@
 import os
 import random
+import tempfile
 
 import discord
 import aiohttp
@@ -7,6 +8,7 @@ import asyncio
 from aiohttp import web
 from discord import app_commands
 from discord.ext import commands
+from gtts import gTTS
 
 from menu_collector import get_menus_by_meal_type, format_menu_for_discord
 
@@ -30,6 +32,10 @@ intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(command_prefix='!', intents=intents)
+
+# TTS 상태 관리
+tts_sessions = {}  # {guild_id: {'voice_client': voice_client, 'channel_id': channel_id, 'queue': []}}
+tts_locks = {}  # {guild_id: asyncio.Lock()}
 
 
 async def ping():
@@ -314,6 +320,183 @@ async def sticker_check(interaction: discord.Interaction, 메시지수: int = 50
         import traceback
         traceback.print_exc()
         await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
+
+
+async def play_tts_queue(guild_id):
+    """TTS 큐를 순차적으로 재생"""
+    if guild_id not in tts_locks:
+        tts_locks[guild_id] = asyncio.Lock()
+
+    async with tts_locks[guild_id]:
+        session = tts_sessions.get(guild_id)
+        if not session:
+            return
+
+        while session['queue']:
+            text = session['queue'].pop(0)
+            voice_client = session['voice_client']
+
+            if not voice_client or not voice_client.is_connected():
+                print(f"음성 클라이언트가 연결되지 않음 (서버: {guild_id})")
+                break
+
+            try:
+                # gTTS로 음성 파일 생성
+                print(f"TTS 생성 중: '{text}'")
+                tts = gTTS(text=text, lang='ko')
+
+                # 임시 파일에 저장
+                with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
+                    temp_filename = fp.name
+                    tts.save(temp_filename)
+
+                # 재생
+                audio_source = discord.FFmpegPCMAudio(temp_filename)
+
+                # 재생 완료 대기
+                if voice_client.is_playing():
+                    voice_client.stop()
+
+                voice_client.play(audio_source)
+
+                # 재생이 끝날 때까지 대기
+                while voice_client.is_playing():
+                    await asyncio.sleep(0.1)
+
+                # 임시 파일 삭제
+                try:
+                    os.remove(temp_filename)
+                except:
+                    pass
+
+                print(f"TTS 재생 완료: '{text}'")
+
+            except Exception as e:
+                print(f"TTS 재생 중 에러: {e}")
+                import traceback
+                traceback.print_exc()
+
+
+@bot.tree.command(name='tts시작', description='음성 채널에 참가하여 특정 채널의 메시지를 TTS로 읽어줍니다')
+@app_commands.describe(채널='TTS로 읽을 텍스트 채널')
+async def tts_start(interaction: discord.Interaction, 채널: discord.TextChannel):
+    await interaction.response.defer()
+
+    try:
+        # 사용자가 음성 채널에 있는지 확인
+        if not interaction.user.voice or not interaction.user.voice.channel:
+            await interaction.followup.send("❌ 먼저 음성 채널에 참가해주세요!")
+            return
+
+        voice_channel = interaction.user.voice.channel
+        guild_id = interaction.guild.id
+
+        # 이미 TTS 세션이 있는 경우
+        if guild_id in tts_sessions:
+            session = tts_sessions[guild_id]
+            if session['voice_client'] and session['voice_client'].is_connected():
+                await interaction.followup.send(f"❌ 이미 TTS가 실행 중입니다!\n음성 채널: {session['voice_client'].channel.mention}\nTTS 채널: <#{session['channel_id']}>")
+                return
+
+        # 음성 채널에 연결
+        try:
+            voice_client = await voice_channel.connect()
+        except Exception as e:
+            await interaction.followup.send(f"❌ 음성 채널 연결 실패: {str(e)}")
+            return
+
+        # TTS 세션 생성
+        tts_sessions[guild_id] = {
+            'voice_client': voice_client,
+            'channel_id': 채널.id,
+            'queue': []
+        }
+
+        embed = discord.Embed(
+            title="🔊 TTS 시작",
+            description=f"음성 채널에 참가했습니다!",
+            color=discord.Color.green()
+        )
+        embed.add_field(name="음성 채널", value=voice_channel.mention, inline=True)
+        embed.add_field(name="TTS 채널", value=채널.mention, inline=True)
+        embed.add_field(
+            name="ℹ️ 사용 방법",
+            value=f"{채널.mention} 채널에 메시지를 입력하면 TTS로 읽어줍니다.\n종료하려면 `/tts종료` 명령어를 사용하세요.",
+            inline=False
+        )
+
+        await interaction.followup.send(embed=embed)
+        print(f"TTS 시작: 서버={interaction.guild.name}, 음성채널={voice_channel.name}, TTS채널={채널.name}")
+
+    except Exception as e:
+        print(f"TTS 시작 중 에러: {e}")
+        import traceback
+        traceback.print_exc()
+        await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
+
+
+@bot.tree.command(name='tts종료', description='TTS를 종료하고 음성 채널에서 나갑니다')
+async def tts_stop(interaction: discord.Interaction):
+    await interaction.response.defer()
+
+    try:
+        guild_id = interaction.guild.id
+
+        if guild_id not in tts_sessions:
+            await interaction.followup.send("❌ 실행 중인 TTS가 없습니다!")
+            return
+
+        session = tts_sessions[guild_id]
+        voice_client = session['voice_client']
+
+        if voice_client and voice_client.is_connected():
+            await voice_client.disconnect()
+
+        del tts_sessions[guild_id]
+
+        await interaction.followup.send("✅ TTS를 종료했습니다!")
+        print(f"TTS 종료: 서버={interaction.guild.name}")
+
+    except Exception as e:
+        print(f"TTS 종료 중 에러: {e}")
+        import traceback
+        traceback.print_exc()
+        await interaction.followup.send(f"❌ 오류가 발생했습니다: {str(e)}")
+
+
+@bot.event
+async def on_message(message):
+    # 봇 자신의 메시지는 무시
+    if message.author.bot:
+        return
+
+    # TTS 세션 확인
+    guild_id = message.guild.id if message.guild else None
+    if not guild_id or guild_id not in tts_sessions:
+        return
+
+    session = tts_sessions[guild_id]
+
+    # TTS 채널인지 확인
+    if message.channel.id != session['channel_id']:
+        return
+
+    # 메시지가 비어있으면 무시
+    if not message.content.strip():
+        return
+
+    # 명령어는 TTS로 읽지 않음
+    if message.content.startswith('/'):
+        return
+
+    # 큐에 추가
+    session['queue'].append(message.content)
+    print(f"TTS 큐에 추가: '{message.content}' (큐 크기: {len(session['queue'])})")
+
+    # 재생 중이 아니면 재생 시작
+    voice_client = session['voice_client']
+    if voice_client and voice_client.is_connected() and not voice_client.is_playing():
+        asyncio.create_task(play_tts_queue(guild_id))
 
 
 # 봇 실행

@@ -10,6 +10,7 @@ ENV PYTHONUNBUFFERED=1
 # 시스템 패키지 업데이트 및 필수 라이브러리 설치
 RUN apt-get update && apt-get install -y \
     gcc \
+    ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 # requirements.txt 복사 및 설치
