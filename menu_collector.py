@@ -1,187 +1,272 @@
+"""
+KAIST 식당 메뉴 수집 모듈
+
+주요 기능:
+- 비동기 메뉴 크롤링
+- 메뉴 캐싱 (날짜별)
+- Discord Embed 포맷팅
+"""
 import aiohttp
 import asyncio
 from collections import defaultdict
 from bs4 import BeautifulSoup
-from datetime import datetime, timezone, timedelta
+from datetime import datetime
+from typing import Dict, List, Optional, Tuple
 import discord
 
-# 한국 시간대
-KST = timezone(timedelta(hours=9))
-
-# 메뉴 캐시: {'2025-10-10': {'중식': {...}, '석식': {...}}}
-menu_cache = {}
-
-
-def get_kst_date():
-    """한국 시간 기준 오늘 날짜 문자열 반환"""
-    return datetime.now(KST).strftime('%Y-%m-%d')
-
-
-def clean_old_cache():
-    """오늘 날짜가 아닌 캐시 데이터 삭제"""
-    today = get_kst_date()
-    to_delete = [date for date in menu_cache.keys() if date != today]
-
-    for date in to_delete:
-        del menu_cache[date]
-        print(f"🗑️ 오래된 캐시 삭제: {date}")
-
-    if to_delete:
-        print(f"✓ {len(to_delete)}개의 오래된 캐시 삭제됨")
+from config import (
+    KST,
+    KAIST_MENU_URL,
+    REQUEST_DELAY_SECONDS,
+    DISCORD_FIELD_MAX_LENGTH,
+    RESTAURANT_CODES,
+    RESTAURANTS_BY_MEAL_TYPE,
+    MEAL_INFO,
+    LOG_MESSAGES
+)
 
 
-def get_cached_menu(meal_type):
-    """캐시에서 메뉴 가져오기"""
-    today = get_kst_date()
-
-    if today in menu_cache and meal_type in menu_cache[today]:
-        print(f"💾 캐시에서 메뉴 로드: {today} - {meal_type}")
-        return menu_cache[today][meal_type]
-
-    return None
-
-
-def save_to_cache(meal_type, menu_data):
-    """메뉴를 캐시에 저장"""
-    today = get_kst_date()
-
-    if today not in menu_cache:
-        menu_cache[today] = {}
-
-    menu_cache[today][meal_type] = menu_data
-    print(f"💾 캐시에 저장: {today} - {meal_type}")
-
-
-async def get_restaurants_menu_async(meal_type, restaurant_infos):
+class MenuCache:
     """
-    aiohttp를 사용한 비동기 메뉴 수집 (Playwright 없이)
+    스레드 안전한 메뉴 캐시 관리 클래스
+
+    구조: {날짜: {식사타입: {식당명: [메뉴1, 메뉴2, ...]}}}
     """
-    menu_infos = defaultdict(list)
 
-    url = "https://www.kaist.ac.kr/kr/html/campus/053001.html"
+    def __init__(self):
+        self._cache: Dict[str, Dict[str, Dict[str, List[str]]]] = {}
+        self._lock = asyncio.Lock()
 
-    async with aiohttp.ClientSession() as session:
+    def _get_kst_date(self) -> str:
+        """한국 시간 기준 오늘 날짜 문자열 반환"""
+        return datetime.now(KST).strftime('%Y-%m-%d')
+
+    async def get(self, meal_type: str) -> Optional[Dict[str, List[str]]]:
+        """캐시에서 메뉴 가져오기"""
+        async with self._lock:
+            today = self._get_kst_date()
+
+            if today in self._cache and meal_type in self._cache[today]:
+                print(LOG_MESSAGES['cache_hit'].format(date=today, meal_type=meal_type))
+                return self._cache[today][meal_type]
+
+            return None
+
+    async def set(self, meal_type: str, menu_data: Dict[str, List[str]]) -> None:
+        """메뉴를 캐시에 저장"""
+        async with self._lock:
+            today = self._get_kst_date()
+
+            if today not in self._cache:
+                self._cache[today] = {}
+
+            self._cache[today][meal_type] = menu_data
+            print(LOG_MESSAGES['cache_save'].format(date=today, meal_type=meal_type))
+
+    async def clean_old_cache(self) -> None:
+        """오늘 날짜가 아닌 캐시 데이터 삭제"""
+        async with self._lock:
+            today = self._get_kst_date()
+            to_delete = [date for date in self._cache.keys() if date != today]
+
+            for date in to_delete:
+                del self._cache[date]
+                print(LOG_MESSAGES['cache_delete'].format(date=date))
+
+            if to_delete:
+                print(f"✓ {len(to_delete)}개의 오래된 캐시 삭제됨")
+
+
+# 전역 캐시 인스턴스
+_menu_cache = MenuCache()
+
+
+class MenuParser:
+    """HTML 파싱 및 메뉴 추출 담당 클래스"""
+
+    @staticmethod
+    def parse_headers(table) -> List[str]:
+        """테이블 헤더 파싱"""
+        headers = []
+        header_elements = table.select('thead th')
+        for header in header_elements:
+            text = header.get_text(strip=True)
+            if text:
+                headers.append(text)
+        return headers
+
+    @staticmethod
+    def parse_menu_rows(
+        table,
+        headers: List[str],
+        meal_type: str
+    ) -> List[str]:
+        """테이블에서 메뉴 행 파싱"""
+        menus = []
+        rows = table.select('tbody tr')
+
+        for row in rows:
+            cells = row.select('td')
+
+            for i, cell in enumerate(cells):
+                if i >= len(headers):
+                    continue
+
+                meal_type_raw = headers[i]
+                menu_content = cell.get_text(strip=True)
+
+                # meal_type 매칭 및 유효성 검증
+                if meal_type not in meal_type_raw:
+                    continue
+
+                if not menu_content or menu_content in ["", "-", "운영안함"]:
+                    continue
+
+                menus.append(menu_content)
+
+        return menus
+
+
+class MenuCollector:
+    """비동기 메뉴 수집 담당 클래스"""
+
+    def __init__(self, session: aiohttp.ClientSession):
+        self.session = session
+        self.parser = MenuParser()
+
+    async def fetch_restaurant_menu(
+        self,
+        restaurant_code: str,
+        restaurant_name: str,
+        meal_type: str
+    ) -> List[str]:
+        """특정 식당의 메뉴 가져오기"""
+        try:
+            print(f"\n{'=' * 50}")
+            print(f"{restaurant_name} ({restaurant_code}) 처리 중...")
+
+            data = {'dvs_cd': restaurant_code}
+
+            async with self.session.post(KAIST_MENU_URL, data=data) as response:
+                if response.status != 200:
+                    print(f"{restaurant_name} - HTTP 에러: {response.status}")
+                    return []
+
+                html = await response.text()
+                soup = BeautifulSoup(html, 'html.parser')
+
+                # 테이블 찾기
+                table = soup.select_one('.table')
+                if not table:
+                    print(f"{restaurant_name} - 테이블을 찾을 수 없음")
+                    return []
+
+                # 헤더 및 메뉴 파싱
+                headers = self.parser.parse_headers(table)
+                print(f"{restaurant_name} - 헤더: {headers}")
+
+                if not headers:
+                    print(f"{restaurant_name} - 헤더 없음")
+                    return []
+
+                menus = self.parser.parse_menu_rows(table, headers, meal_type)
+
+                print(f"{restaurant_name} - 최종 수집된 메뉴 개수: {len(menus)}")
+                for menu in menus:
+                    print(f"    -> ✓ 메뉴 추가: {menu[:50]}...")
+
+                return menus
+
+        except aiohttp.ClientError as e:
+            print(f"{restaurant_name} - 네트워크 에러: {e}")
+            return []
+        except Exception as e:
+            print(f"{restaurant_name} - 처리 중 예외 발생: {e}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    async def fetch_all_restaurants(
+        self,
+        meal_type: str,
+        restaurant_infos: List[Tuple[str, str]]
+    ) -> Dict[str, List[str]]:
+        """여러 식당의 메뉴를 비동기로 수집"""
+        menu_infos = defaultdict(list)
+
         for rest_code, rest_name in restaurant_infos:
-            try:
-                print(f"\n{'=' * 50}")
-                print(f"{rest_name} ({rest_code}) 처리 중...")
+            menus = await self.fetch_restaurant_menu(rest_code, rest_name, meal_type)
+            if menus:
+                menu_infos[rest_name] = menus
 
-                # POST 요청 데이터
-                data = {
-                    'dvs_cd': rest_code
-                }
+            # 서버 부하 방지를 위한 딜레이
+            await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
-                # POST 요청 보내기
-                async with session.post(url, data=data) as response:
-                    if response.status != 200:
-                        print(f"{rest_name} - HTTP 에러: {response.status}")
-                        continue
+        result = dict(menu_infos)
+        print(f"\n{'=' * 50}")
+        print(f"최종 결과: {len(result)}개 식당")
+        for rest, menus in result.items():
+            print(f"  {rest}: {len(menus)}개 메뉴")
 
-                    html = await response.text()
-                    soup = BeautifulSoup(html, 'html.parser')
-
-                    # 테이블 찾기
-                    table = soup.select_one('.table')
-                    if not table:
-                        print(f"{rest_name} - 테이블을 찾을 수 없음")
-                        continue
-
-                    # 헤더 파싱
-                    headers = []
-                    header_elements = table.select('thead th')
-                    for header in header_elements:
-                        text = header.get_text(strip=True)
-                        if text:
-                            headers.append(text)
-
-                    print(f"{rest_name} - 헤더: {headers}")
-
-                    if not headers:
-                        print(f"{rest_name} - 헤더 없음")
-                        continue
-
-                    # 메뉴 파싱
-                    rows = table.select('tbody tr')
-                    print(f"{rest_name} - 행 개수: {len(rows)}")
-
-                    for row_idx, row in enumerate(rows):
-                        cells = row.select('td')
-
-                        for i, cell in enumerate(cells):
-                            if i < len(headers):
-                                meal_type_raw = headers[i]
-                                menu_content = cell.get_text(strip=True)
-
-                                # meal_type 매칭
-                                if meal_type not in meal_type_raw:
-                                    continue
-
-                                if not menu_content or menu_content in ["", "-", "운영안함"]:
-                                    continue
-
-                                print(f"    -> ✓ 메뉴 추가: {menu_content[:50]}...")
-                                menu_infos[rest_name].append(menu_content)
-
-                    print(f"{rest_name} - 최종 수집된 메뉴 개수: {len(menu_infos[rest_name])}")
-
-                # 요청 간 딜레이 (서버 부하 방지)
-                await asyncio.sleep(0.5)
-
-            except Exception as e:
-                print(f"{rest_name} - 처리 중 에러: {e}")
-                import traceback
-                traceback.print_exc()
-                continue
-
-    result = dict(menu_infos)
-    print(f"\n{'=' * 50}")
-    print(f"최종 결과: {len(result)}개 식당")
-    for rest, menus in result.items():
-        print(f"  {rest}: {len(menus)}개 메뉴")
-
-    return result
+        return result
 
 
-async def get_menus_by_meal_type(meal_type):
+async def get_menus_by_meal_type(meal_type: str) -> Dict[str, List[str]]:
     """
-    meal_type에 따라 해당하는 식당들의 메뉴를 조회 (비동기)
+    meal_type에 따라 해당하는 식당들의 메뉴를 조회 (캐싱 적용)
+
+    Args:
+        meal_type: '중식' 또는 '석식'
+
+    Returns:
+        {식당명: [메뉴1, 메뉴2, ...]} 형태의 딕셔너리
     """
-    restaurants_by_meal_type = {
-        '중식': ['west', 'east1', 'east2'],
-        '석식': ['west', 'east1']
-    }
+    # 캐시 확인
+    cached = await _menu_cache.get(meal_type)
+    if cached is not None:
+        return cached
 
-    restaurant_names = {
-        'west': '서맛골(서측식당)',
-        'east1': '동맛골(동측학생식당)',
-        'east2': '동맛골(동측 교직원식당)'
-    }
-
-    if meal_type not in restaurants_by_meal_type:
+    # 유효성 검증
+    if meal_type not in RESTAURANTS_BY_MEAL_TYPE:
         print(f"❌ 유효하지 않은 meal_type: {meal_type}")
         return {}
 
-    restaurants = restaurants_by_meal_type[meal_type]
-    restaurant_infos = [(code, restaurant_names[code]) for code in restaurants]
+    # 식당 정보 준비
+    restaurants = RESTAURANTS_BY_MEAL_TYPE[meal_type]
+    restaurant_infos = [(code, RESTAURANT_CODES[code]) for code in restaurants]
 
     print(f"\n{'=' * 50}")
     print(f"메뉴 조회 시작 - {meal_type}")
     print(f"대상 식당: {[name for _, name in restaurant_infos]}")
     print(f"{'=' * 50}")
 
-    return await get_restaurants_menu_async(meal_type, restaurant_infos)
+    # 메뉴 수집
+    async with aiohttp.ClientSession() as session:
+        collector = MenuCollector(session)
+        menus = await collector.fetch_all_restaurants(meal_type, restaurant_infos)
+
+    # 캐시에 저장
+    if menus:
+        await _menu_cache.set(meal_type, menus)
+
+    return menus
 
 
-def format_menu_for_discord(meal_type, menu_infos):
-    """Discord 메시지 형식으로 메뉴 포맷팅"""
+def format_menu_for_discord(
+    meal_type: str,
+    menu_infos: Dict[str, List[str]]
+) -> discord.Embed:
+    """
+    Discord 메시지 형식으로 메뉴 포맷팅
 
-    meal_info = {
-        "조식": ("🌅 조식", "08:00-09:30"),
-        "중식": ("🍽️ 중식", "11:30-13:30"),
-        "석식": ("🌙 석식", "17:00-19:00")
-    }
+    Args:
+        meal_type: 식사 타입
+        menu_infos: 식당별 메뉴 딕셔너리
 
-    emoji, time_range = meal_info.get(meal_type, ("🍴", ""))
+    Returns:
+        Discord Embed 객체
+    """
+    emoji, time_range = MEAL_INFO.get(meal_type, ("🍴", ""))
 
     embed = discord.Embed(
         title=f"{emoji} KAIST 오늘의 식단",
@@ -189,6 +274,7 @@ def format_menu_for_discord(meal_type, menu_infos):
         color=discord.Color.blue()
     )
 
+    # 메뉴가 없는 경우
     if not menu_infos:
         embed.add_field(
             name="❌ 운영 안함",
@@ -197,20 +283,11 @@ def format_menu_for_discord(meal_type, menu_infos):
         )
         return embed
 
+    # 각 식당별 메뉴 추가
     for restaurant, menus in menu_infos.items():
-        menu_text = ""
-        for menu in menus:
-            menu_lines = menu.split('\n')
-            for line in menu_lines:
-                line = line.strip()
-                if line and line not in ['-', '']:
-                    menu_text += f"• {line}\n"
+        menu_text = _format_menu_text(menus)
 
         if menu_text:
-            # Discord 필드는 1024자 제한이 있으므로 필요시 자르기
-            if len(menu_text) > 1024:
-                menu_text = menu_text[:1021] + "..."
-
             embed.add_field(
                 name=f"📍 {restaurant}",
                 value=menu_text,
@@ -220,3 +297,26 @@ def format_menu_for_discord(meal_type, menu_infos):
     embed.set_footer(text="KAIST 학생식당 • 메뉴는 사정에 따라 변경될 수 있습니다")
 
     return embed
+
+
+def _format_menu_text(menus: List[str]) -> str:
+    """메뉴 리스트를 Discord 필드 형식으로 변환"""
+    menu_text = ""
+
+    for menu in menus:
+        menu_lines = menu.split('\n')
+        for line in menu_lines:
+            line = line.strip()
+            if line and line not in ['-', '']:
+                menu_text += f"• {line}\n"
+
+    # Discord 필드 길이 제한 처리
+    if len(menu_text) > DISCORD_FIELD_MAX_LENGTH:
+        menu_text = menu_text[:DISCORD_FIELD_MAX_LENGTH - 3] + "..."
+
+    return menu_text
+
+
+async def cleanup_cache() -> None:
+    """오래된 캐시 정리 (주기적으로 호출)"""
+    await _menu_cache.clean_old_cache()
