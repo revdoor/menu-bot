@@ -20,7 +20,7 @@ from discord import app_commands
 from discord.ext import commands
 
 from menu_collector import get_menus_by_meal_type, format_menu_for_discord
-from sticker_stats import ChannelParser, StickerAnalyzer, StickerStatsFormatter
+from sticker_stats import parse_channels, StickerAnalyzer, create_sticker_embed
 from tts_manager import TTSManager
 from config import (
     PING_INTERVAL_SECONDS,
@@ -271,7 +271,7 @@ async def sticker_check(
 
     # 채널 파싱
     try:
-        channels = ChannelParser.parse_channels(채널들, interaction.guild, interaction.channel)
+        channels = parse_channels(채널들, interaction.guild, interaction.channel)
     except ValueError as e:
         await interaction.followup.send(f"❌ {str(e)}\n채널 멘션(#채널명) 또는 ID를 입력해주세요.")
         return
@@ -292,7 +292,7 @@ async def sticker_check(
         return
 
     # Embed 생성 및 전송
-    embed = StickerStatsFormatter.create_embed(channels, stats, limit, interaction.user.display_name)
+    embed = create_sticker_embed(channels, stats, limit, interaction.user.display_name)
     await interaction.followup.send(embed=embed)
 
     print(f"✅ 스티커 통계 전송 완료!")
