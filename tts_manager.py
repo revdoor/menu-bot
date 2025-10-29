@@ -111,9 +111,10 @@ class TTSManager:
         async with session.lock:
             while session.queue:
                 text = session.queue.pop(0)
-                await self._play_tts(session.voice_client, text)
+                await TTSManager._play_tts(session.voice_client, text)
 
-    async def _play_tts(self, voice_client: discord.VoiceClient, text: str) -> None:
+    @staticmethod
+    async def _play_tts(voice_client: discord.VoiceClient, text: str) -> None:
         """
         TTS 음성 생성 및 재생
 

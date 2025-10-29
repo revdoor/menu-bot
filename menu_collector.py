@@ -28,53 +28,63 @@ from config import (
 
 class MenuCache:
     """
-    스레드 안전한 메뉴 캐시 관리 클래스
+    날짜별 메뉴 캐시 관리 클래스
 
-    구조: {날짜: {식사타입: {식당명: [메뉴1, 메뉴2, ...]}}}
+    구조: 오늘 날짜만 유지 (날짜가 바뀌면 자동 초기화)
+    - _current_date: 현재 캐시된 날짜
+    - _menus: {식사타입: {식당명: [메뉴1, 메뉴2, ...]}}
     """
 
     def __init__(self):
-        self._cache: Dict[str, Dict[str, Dict[str, List[str]]]] = {}
+        self._current_date: Optional[str] = None
+        self._menus: Dict[str, Dict[str, List[str]]] = {}
         self._lock = asyncio.Lock()
 
-    def _get_kst_date(self) -> str:
+    @staticmethod
+    def _get_kst_date() -> str:
         """한국 시간 기준 오늘 날짜 문자열 반환"""
         return datetime.now(KST).strftime('%Y-%m-%d')
 
     async def get(self, meal_type: str) -> Optional[Dict[str, List[str]]]:
-        """캐시에서 메뉴 가져오기"""
+        """
+        캐시에서 메뉴 가져오기 (날짜가 바뀌면 자동으로 캐시 초기화)
+
+        Args:
+            meal_type: 식사 타입 ('중식', '석식' 등)
+
+        Returns:
+            캐시된 메뉴 또는 None
+        """
         async with self._lock:
             today = self._get_kst_date()
 
-            if today in self._cache and meal_type in self._cache[today]:
+            # 날짜가 바뀌면 캐시 초기화
+            if self._current_date != today:
+                if self._current_date:
+                    print(LOG_MESSAGES['cache_delete'].format(date=self._current_date))
+                self._current_date = today
+                self._menus = {}
+
+            # 캐시 확인
+            if meal_type in self._menus:
                 print(LOG_MESSAGES['cache_hit'].format(date=today, meal_type=meal_type))
-                return self._cache[today][meal_type]
+                return self._menus[meal_type]
 
             return None
 
     async def set(self, meal_type: str, menu_data: Dict[str, List[str]]) -> None:
-        """메뉴를 캐시에 저장"""
+        """
+        메뉴를 캐시에 저장
+
+        Args:
+            meal_type: 식사 타입
+            menu_data: 메뉴 데이터 {식당명: [메뉴들]}
+        """
         async with self._lock:
             today = self._get_kst_date()
-
-            if today not in self._cache:
-                self._cache[today] = {}
-
-            self._cache[today][meal_type] = menu_data
+            self._current_date = today
+            self._menus[meal_type] = menu_data
             print(LOG_MESSAGES['cache_save'].format(date=today, meal_type=meal_type))
-
-    async def clean_old_cache(self) -> None:
-        """오늘 날짜가 아닌 캐시 데이터 삭제"""
-        async with self._lock:
-            today = self._get_kst_date()
-            to_delete = [date for date in self._cache.keys() if date != today]
-
-            for date in to_delete:
-                del self._cache[date]
-                print(LOG_MESSAGES['cache_delete'].format(date=date))
-
-            if to_delete:
-                print(f"✓ {len(to_delete)}개의 오래된 캐시 삭제됨")
 
 
 # 전역 캐시 인스턴스
@@ -221,7 +231,7 @@ async def get_menus_by_meal_type(meal_type: str) -> Dict[str, List[str]]:
     Returns:
         {식당명: [메뉴1, 메뉴2, ...]} 형태의 딕셔너리
     """
-    # 캐시 확인
+    # 캐시 확인 (자동으로 오래된 캐시 정리됨)
     cached = await _menu_cache.get(meal_type)
     if cached is not None:
         return cached
@@ -315,8 +325,3 @@ def _format_menu_text(menus: List[str]) -> str:
         menu_text = menu_text[:DISCORD_FIELD_MAX_LENGTH - 3] + "..."
 
     return menu_text
-
-
-async def cleanup_cache() -> None:
-    """오래된 캐시 정리 (주기적으로 호출)"""
-    await _menu_cache.clean_old_cache()
