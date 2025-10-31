@@ -8,10 +8,9 @@ KAIST 식당 메뉴 수집 모듈
 """
 import aiohttp
 import asyncio
-from collections import defaultdict
 from bs4 import BeautifulSoup
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, Optional
 import discord
 
 from config import (
@@ -37,7 +36,7 @@ class MenuCache:
 
     def __init__(self):
         self._current_date: Optional[str] = None
-        self._menus: Dict[str, Dict[str, List[str]]] = {}
+        self._menus: Dict[str, Dict[str, list[str]]] = {}
         self._lock = asyncio.Lock()
 
     @staticmethod
@@ -45,7 +44,7 @@ class MenuCache:
         """한국 시간 기준 오늘 날짜 문자열 반환"""
         return datetime.now(KST).strftime('%Y-%m-%d')
 
-    async def get(self, meal_type: str) -> Optional[Dict[str, List[str]]]:
+    async def get(self, meal_type: str) -> Optional[Dict[str, list[str]]]:
         """
         캐시에서 메뉴 가져오기 (날짜가 바뀌면 자동으로 캐시 초기화)
 
@@ -72,7 +71,7 @@ class MenuCache:
 
             return None
 
-    async def set(self, meal_type: str, menu_data: Dict[str, List[str]]) -> None:
+    async def set(self, meal_type: str, menu_data: Dict[str, list[str]]) -> None:
         """
         메뉴를 캐시에 저장
 
@@ -95,7 +94,7 @@ class MenuParser:
     """HTML 파싱 및 메뉴 추출 담당 클래스"""
 
     @staticmethod
-    def parse_headers(table) -> List[str]:
+    def parse_headers(table) -> list[str]:
         """테이블 헤더 파싱"""
         headers = []
         header_elements = table.select('thead th')
@@ -108,9 +107,9 @@ class MenuParser:
     @staticmethod
     def parse_menu_rows(
         table,
-        headers: List[str],
+        headers: list[str],
         meal_type: str
-    ) -> List[str]:
+    ) -> list[str]:
         """테이블에서 메뉴 행 파싱"""
         menus = []
         rows = table.select('tbody tr')
@@ -149,17 +148,14 @@ class MenuCollector:
         restaurant_code: str,
         restaurant_name: str,
         meal_type: str
-    ) -> List[str]:
+    ) -> list[str]:
         """특정 식당의 메뉴 가져오기"""
         try:
-            print(f"\n{'=' * 50}")
-            print(f"{restaurant_name} ({restaurant_code}) 처리 중...")
-
             data = {'dvs_cd': restaurant_code}
 
             async with self.session.post(KAIST_MENU_URL, data=data) as response:
                 if response.status != 200:
-                    print(f"{restaurant_name} - HTTP 에러: {response.status}")
+                    print(f"{restaurant_name} - HTTP {response.status} 에러")
                     return []
 
                 html = await response.text()
@@ -168,22 +164,15 @@ class MenuCollector:
                 # 테이블 찾기
                 table = soup.select_one('.table')
                 if not table:
-                    print(f"{restaurant_name} - 테이블을 찾을 수 없음")
                     return []
 
                 # 헤더 및 메뉴 파싱
                 headers = self.parser.parse_headers(table)
-                print(f"{restaurant_name} - 헤더: {headers}")
-
                 if not headers:
-                    print(f"{restaurant_name} - 헤더 없음")
                     return []
 
                 menus = self.parser.parse_menu_rows(table, headers, meal_type)
-
-                print(f"{restaurant_name} - 최종 수집된 메뉴 개수: {len(menus)}")
-                for menu in menus:
-                    print(f"    -> ✓ 메뉴 추가: {menu[:50]}...")
+                print(f"{restaurant_name}: {len(menus)}개 메뉴")
 
                 return menus
 
@@ -191,18 +180,16 @@ class MenuCollector:
             print(f"{restaurant_name} - 네트워크 에러: {e}")
             return []
         except Exception as e:
-            print(f"{restaurant_name} - 처리 중 예외 발생: {e}")
-            import traceback
-            traceback.print_exc()
+            print(f"{restaurant_name} - 에러: {e}")
             return []
 
     async def fetch_all_restaurants(
         self,
         meal_type: str,
-        restaurant_infos: List[Tuple[str, str]]
-    ) -> Dict[str, List[str]]:
+        restaurant_infos: list[tuple[str, str]]
+    ) -> Dict[str, list[str]]:
         """여러 식당의 메뉴를 비동기로 수집"""
-        menu_infos = defaultdict(list)
+        menu_infos = {}
 
         for rest_code, rest_name in restaurant_infos:
             menus = await self.fetch_restaurant_menu(rest_code, rest_name, meal_type)
@@ -212,16 +199,11 @@ class MenuCollector:
             # 서버 부하 방지를 위한 딜레이
             await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
-        result = dict(menu_infos)
-        print(f"\n{'=' * 50}")
-        print(f"최종 결과: {len(result)}개 식당")
-        for rest, menus in result.items():
-            print(f"  {rest}: {len(menus)}개 메뉴")
-
-        return result
+        print(f"\n최종 결과: {len(menu_infos)}개 식당")
+        return menu_infos
 
 
-async def get_menus_by_meal_type(meal_type: str) -> Dict[str, List[str]]:
+async def get_menus_by_meal_type(meal_type: str) -> Dict[str, list[str]]:
     """
     meal_type에 따라 해당하는 식당들의 메뉴를 조회 (캐싱 적용)
 
@@ -245,10 +227,7 @@ async def get_menus_by_meal_type(meal_type: str) -> Dict[str, List[str]]:
     restaurants = RESTAURANTS_BY_MEAL_TYPE[meal_type]
     restaurant_infos = [(code, RESTAURANT_CODES[code]) for code in restaurants]
 
-    print(f"\n{'=' * 50}")
-    print(f"메뉴 조회 시작 - {meal_type}")
-    print(f"대상 식당: {[name for _, name in restaurant_infos]}")
-    print(f"{'=' * 50}")
+    print(f"메뉴 조회: {meal_type}")
 
     # 메뉴 수집
     async with aiohttp.ClientSession() as session:
@@ -264,7 +243,7 @@ async def get_menus_by_meal_type(meal_type: str) -> Dict[str, List[str]]:
 
 def format_menu_for_discord(
     meal_type: str,
-    menu_infos: Dict[str, List[str]]
+    menu_infos: Dict[str, list[str]]
 ) -> discord.Embed:
     """
     Discord 메시지 형식으로 메뉴 포맷팅
@@ -309,7 +288,7 @@ def format_menu_for_discord(
     return embed
 
 
-def _format_menu_text(menus: List[str]) -> str:
+def _format_menu_text(menus: list[str]) -> str:
     """메뉴 리스트를 Discord 필드 형식으로 변환"""
     menu_text = ""
 

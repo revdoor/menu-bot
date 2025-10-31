@@ -6,7 +6,7 @@ Discord 스티커 사용 통계 분석 모듈
 - 스티커 사용 통계 수집
 - Discord Embed 포맷팅
 """
-from typing import Dict, List, Optional, Any
+from typing import Dict, Optional, Any
 import discord
 
 from config import DISCORD_EMBED_MAX_FIELDS
@@ -18,7 +18,7 @@ def parse_channels(
     channel_input: Optional[str],
     guild: discord.Guild,
     current_channel: discord.TextChannel
-) -> List[discord.TextChannel]:
+) -> list[discord.TextChannel]:
     """
     채널 문자열을 파싱하여 채널 리스트 반환
 
@@ -91,7 +91,7 @@ class StickerAnalyzer:
 
     async def collect_stats(
         self,
-        channels: List[discord.TextChannel],
+        channels: list[discord.TextChannel],
         limit: int
     ) -> Dict[str, Any]:
         """
@@ -143,7 +143,7 @@ class StickerAnalyzer:
 # ==================== Embed Formatting ====================
 
 def create_sticker_embed(
-    channels: List[discord.TextChannel],
+    channels: list[discord.TextChannel],
     stats: Dict[str, Any],
     limit: int,
     requester_name: str
@@ -207,29 +207,19 @@ def create_sticker_embed(
 
 
 def _format_sticker_ranking(
-    sorted_stickers: List[tuple],
+    sorted_stickers: list[tuple],
     sticker_counts: Dict[str, int]
 ) -> str:
-    """
-    스티커 순위를 텍스트로 포맷팅 (막대 그래프 포함)
-
-    Args:
-        sorted_stickers: 정렬된 (스티커명, 횟수) 튜플 리스트
-        sticker_counts: 전체 스티커 카운트 딕셔너리
-
-    Returns:
-        포맷팅된 순위 문자열
-    """
+    """스티커 순위를 텍스트로 포맷팅 (막대 그래프 포함)"""
     if not sticker_counts:
         return ""
 
     max_count = max(sticker_counts.values())
-    sticker_list_text = ""
+    result = []
 
     for idx, (sticker_name, count) in enumerate(sorted_stickers[:DISCORD_EMBED_MAX_FIELDS], 1):
-        # 막대 그래프 효과
         bar_length = min(int(count / max_count * 10), 10)
         bar = "█" * bar_length
-        sticker_list_text += f"`{idx:2d}.` **{sticker_name}**: {count}회 {bar}\n"
+        result.append(f"`{idx:2d}.` **{sticker_name}**: {count}회 {bar}")
 
-    return sticker_list_text
+    return "\n".join(result)

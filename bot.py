@@ -10,7 +10,6 @@ KAIST 메뉴봇 - Discord Bot
 import os
 import random
 import asyncio
-from typing import List
 from functools import wraps
 
 import discord
@@ -180,7 +179,6 @@ async def on_message(message: discord.Message) -> None:
 @handle_interaction_errors
 async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str]) -> None:
     """메뉴 조회 명령어"""
-    await asyncio.sleep(0.1)  # 타이밍 이슈 방지
     await interaction.response.defer()
 
     meal_type = 종류.value
@@ -231,7 +229,7 @@ async def menu_select(interaction: discord.Interaction, 메뉴들: str) -> None:
     print(f"메뉴 선택: {메뉴들} → {selected}")
 
 
-def _create_menu_select_embed(menu_list: List[str], selected: str, user_name: str) -> discord.Embed:
+def _create_menu_select_embed(menu_list: list[str], selected: str, user_name: str) -> discord.Embed:
     """메뉴 선택 결과 Embed 생성 (내부 헬퍼 함수)"""
     embed = discord.Embed(
         title="🎲 메뉴 선택 결과",

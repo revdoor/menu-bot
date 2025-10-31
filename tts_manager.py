@@ -10,7 +10,7 @@ import os
 import tempfile
 import asyncio
 import traceback
-from typing import Dict, List, Optional
+from typing import Dict, Optional
 
 import discord
 from gtts import gTTS
@@ -27,25 +27,21 @@ class TTSSession:
         """
         self.voice_client = voice_client
         self.channel_id = channel_id
-        self.queue: List[str] = []
+        self.queue: list[str] = []
         self.lock = asyncio.Lock()
 
     def is_connected(self) -> bool:
         """음성 채널 연결 상태 확인"""
-        return self.voice_client and self.voice_client.is_connected()
+        return bool(self.voice_client) and self.voice_client.is_connected()
 
     def add_to_queue(self, text: str) -> None:
         """재생 큐에 텍스트 추가"""
         self.queue.append(text)
         print(f"TTS 큐에 추가: '{text}' (큐 크기: {len(self.queue)})")
 
-    def has_queued_items(self) -> bool:
-        """큐에 대기 중인 항목이 있는지 확인"""
-        return len(self.queue) > 0
-
     def is_playing(self) -> bool:
         """현재 재생 중인지 확인"""
-        return self.voice_client and self.voice_client.is_playing()
+        return bool(self.voice_client) and self.voice_client.is_playing()
 
 
 class TTSManager:
