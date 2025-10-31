@@ -7,6 +7,7 @@ Discord TTS (Text-to-Speech) 관리 모듈
 - gTTS를 이용한 한국어 음성 생성
 """
 import os
+import logging
 import tempfile
 import asyncio
 import traceback
@@ -14,6 +15,9 @@ from typing import Dict, Optional
 
 import discord
 from gtts import gTTS
+
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 
 class TTSSession:
@@ -37,7 +41,7 @@ class TTSSession:
     def add_to_queue(self, text: str) -> None:
         """재생 큐에 텍스트 추가"""
         self.queue.append(text)
-        print(f"TTS 큐에 추가: '{text}' (큐 크기: {len(self.queue)})")
+        logger.debug(f"TTS 큐에 추가: '{text}' (큐 크기: {len(self.queue)})")
 
     def is_playing(self) -> bool:
         """현재 재생 중인지 확인"""
@@ -119,13 +123,13 @@ class TTSManager:
             text: 읽을 텍스트
         """
         if not voice_client or not voice_client.is_connected():
-            print(f"음성 클라이언트가 연결되지 않음")
+            logger.warning(f"음성 클라이언트가 연결되지 않음")
             return
 
         temp_filename = None
 
         try:
-            print(f"TTS 생성 중: '{text}'")
+            logger.debug(f"TTS 생성 중: '{text}'")
 
             # gTTS로 음성 파일 생성
             tts = gTTS(text=text, lang='ko')
@@ -147,11 +151,10 @@ class TTSManager:
             while voice_client.is_playing():
                 await asyncio.sleep(0.1)
 
-            print(f"TTS 재생 완료: '{text}'")
+            logger.debug(f"TTS 재생 완료: '{text}'")
 
         except Exception as e:
-            print(f"TTS 재생 중 에러: {e}")
-            traceback.print_exc()
+            logger.error(f"TTS 재생 중 에러: {e}", exc_info=True)
 
         finally:
             # 임시 파일 삭제

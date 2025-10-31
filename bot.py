@@ -8,6 +8,7 @@ KAIST 메뉴봇 - Discord Bot
 - TTS 기능 (/tts시작, /tts종료)
 """
 import os
+import logging
 import random
 import asyncio
 from functools import wraps
@@ -26,8 +27,12 @@ from config import (
     HEALTH_CHECK_PORT,
     MAX_MESSAGE_HISTORY,
     DEFAULT_MESSAGE_HISTORY,
-    LOG_MESSAGES
+    LOG_MESSAGES,
+    setup_logging
 )
+
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 
 # ==================== Web Server ====================
@@ -45,7 +50,7 @@ async def start_web_server() -> None:
     await runner.setup()
     site = web.TCPSite(runner, '0.0.0.0', HEALTH_CHECK_PORT)
     await site.start()
-    print(f"웹 서버 시작됨 (포트 {HEALTH_CHECK_PORT})")
+    logger.info(f"웹 서버 시작됨 (포트 {HEALTH_CHECK_PORT})")
 
 
 # ==================== Bot Setup ====================
@@ -74,12 +79,10 @@ def handle_interaction_errors(func):
             return await func(interaction, *args, **kwargs)
 
         except discord.errors.NotFound:
-            print("⚠️ 인터랙션 타이밍 에러 - 무시함")
+            logger.warning("⚠️ 인터랙션 타이밍 에러 - 무시함")
 
         except Exception as e:
-            print(f"❌ {func.__name__} 중 에러 발생: {e}")
-            import traceback
-            traceback.print_exc()
+            logger.error(f"❌ {func.__name__} 중 에러 발생: {e}", exc_info=True)
 
             try:
                 error_msg = "❌ 오류가 발생했습니다. 잠시 후 다시 시도해주세요."
@@ -105,12 +108,12 @@ async def ping_self() -> None:
             async with aiohttp.ClientSession() as session:
                 async with session.get(koyeb_url) as response:
                     if response.status == 200:
-                        print(LOG_MESSAGES['ping_success'].format(status=response.status))
+                        logger.debug(LOG_MESSAGES['ping_success'].format(status=response.status))
                     else:
-                        print(LOG_MESSAGES['ping_warning'].format(status=response.status))
+                        logger.warning(LOG_MESSAGES['ping_warning'].format(status=response.status))
 
         except Exception as e:
-            print(LOG_MESSAGES['ping_failed'].format(error=e))
+            logger.error(LOG_MESSAGES['ping_failed'].format(error=e))
 
         await asyncio.sleep(PING_INTERVAL_SECONDS)
 
@@ -120,16 +123,16 @@ async def ping_self() -> None:
 @bot.event
 async def on_ready() -> None:
     """봇 시작 이벤트"""
-    print(f'{bot.user.name}으로 로그인했습니다!')
-    print(f'봇 ID: {bot.user.id}')
+    logger.info(f'{bot.user.name}으로 로그인했습니다!')
+    logger.info(f'봇 ID: {bot.user.id}')
 
     try:
         synced = await bot.tree.sync()
-        print(f'{len(synced)}개의 슬래시 명령어가 동기화되었습니다.')
+        logger.info(f'{len(synced)}개의 슬래시 명령어가 동기화되었습니다.')
     except Exception as e:
-        print(f'동기화 실패: {e}')
+        logger.error(f'동기화 실패: {e}')
 
-    print('------')
+    logger.info('------')
 
     # 백그라운드 태스크 시작
     bot.loop.create_task(start_web_server())
@@ -182,16 +185,14 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
     await interaction.response.defer()
 
     meal_type = 종류.value
-    print(f"\n{'=' * 60}")
-    print(f"메뉴 요청 받음: {meal_type} (사용자: {interaction.user.name})")
-    print(f"{'=' * 60}")
+    logger.info(f"메뉴 요청 받음: {meal_type} (사용자: {interaction.user.name})")
 
     # 메뉴 데이터 가져오기
     menus = await get_menus_by_meal_type(meal_type)
 
-    print(f"메뉴 결과: {len(menus)}개 식단")
+    logger.info(f"메뉴 결과: {len(menus)}개 식당")
     for rest, menu_list in menus.items():
-        print(f"  - {rest}: {len(menu_list)}개 메뉴")
+        logger.debug(f"  - {rest}: {len(menu_list)}개 메뉴")
 
     if not menus:
         await interaction.followup.send("❌ 메뉴 정보를 가져오는데 실패했습니다. 잠시 후 다시 시도해주세요.")
@@ -200,7 +201,7 @@ async def menu(interaction: discord.Interaction, 종류: app_commands.Choice[str
     # Discord Embed 형식으로 변환 및 전송
     embed = format_menu_for_discord(meal_type, menus)
     await interaction.followup.send(embed=embed)
-    print("✅ 메뉴 전송 완료!")
+    logger.info("✅ 메뉴 전송 완료!")
 
 
 @bot.tree.command(name='메뉴선택', description='메뉴 중에서 랜덤으로 하나를 골라드립니다')
@@ -226,7 +227,7 @@ async def menu_select(interaction: discord.Interaction, 메뉴들: str) -> None:
     embed = _create_menu_select_embed(menu_list, selected, interaction.user.display_name)
 
     await interaction.followup.send(embed=embed)
-    print(f"메뉴 선택: {메뉴들} → {selected}")
+    logger.info(f"메뉴 선택: {메뉴들} → {selected}")
 
 
 def _create_menu_select_embed(menu_list: list[str], selected: str, user_name: str) -> discord.Embed:
@@ -274,10 +275,8 @@ async def sticker_check(
         await interaction.followup.send(f"❌ {str(e)}\n채널 멘션(#채널명) 또는 ID를 입력해주세요.")
         return
 
-    print(f"\n{'=' * 60}")
-    print(f"스티커 체크 요청: 최근 {limit}개 메시지 (사용자: {interaction.user.name})")
-    print(f"대상 채널: {[ch.name for ch in channels]}")
-    print(f"{'=' * 60}")
+    logger.info(f"스티커 체크 요청: 최근 {limit}개 메시지 (사용자: {interaction.user.name})")
+    logger.info(f"대상 채널: {[ch.name for ch in channels]}")
 
     # 스티커 통계 수집
     analyzer = StickerAnalyzer(interaction.guild)
@@ -293,10 +292,10 @@ async def sticker_check(
     embed = create_sticker_embed(channels, stats, limit, interaction.user.display_name)
     await interaction.followup.send(embed=embed)
 
-    print(f"✅ 스티커 통계 전송 완료!")
-    print(f"   - 총 메시지: {stats['total_messages']}")
-    print(f"   - 스티커 메시지: {stats['messages_with_stickers']}")
-    print(f"   - 스티커 종류: {len(stats['sticker_counts'])}")
+    logger.info(f"✅ 스티커 통계 전송 완료!")
+    logger.debug(f"   - 총 메시지: {stats['total_messages']}")
+    logger.debug(f"   - 스티커 메시지: {stats['messages_with_stickers']}")
+    logger.debug(f"   - 스티커 종류: {len(stats['sticker_counts'])}")
 
 
 # ==================== TTS Commands ====================
@@ -351,7 +350,7 @@ async def tts_start(interaction: discord.Interaction, 채널: discord.TextChanne
     )
 
     await interaction.followup.send(embed=embed)
-    print(f"TTS 시작: 서버={interaction.guild.name}, 음성채널={voice_channel.name}, TTS채널={채널.name}")
+    logger.info(f"TTS 시작: 서버={interaction.guild.name}, 음성채널={voice_channel.name}, TTS채널={채널.name}")
 
 
 @bot.tree.command(name='tts종료', description='TTS를 종료하고 음성 채널에서 나갑니다')
@@ -371,15 +370,18 @@ async def tts_stop(interaction: discord.Interaction) -> None:
     await tts_manager.disconnect_session(guild_id)
 
     await interaction.followup.send("✅ TTS를 종료했습니다!")
-    print(f"TTS 종료: 서버={interaction.guild.name}")
+    logger.info(f"TTS 종료: 서버={interaction.guild.name}")
 
 
 # ==================== Bot Start ====================
 
 if __name__ == "__main__":
+    # 로깅 시스템 초기화
+    setup_logging()
+
     token = os.environ.get('TOKEN')
     if not token:
-        print("❌ TOKEN 환경변수가 설정되지 않았습니다!")
+        logger.error("❌ TOKEN 환경변수가 설정되지 않았습니다!")
     else:
-        print("봇 시작 중...")
+        logger.info("봇 시작 중...")
         bot.run(token)

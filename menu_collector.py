@@ -6,6 +6,7 @@ KAIST 식당 메뉴 수집 모듈
 - 메뉴 캐싱 (날짜별)
 - Discord Embed 포맷팅
 """
+import logging
 import aiohttp
 import asyncio
 from bs4 import BeautifulSoup
@@ -23,6 +24,9 @@ from config import (
     MEAL_INFO,
     LOG_MESSAGES
 )
+
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 
 class MenuCache:
@@ -60,13 +64,13 @@ class MenuCache:
             # 날짜가 바뀌면 캐시 초기화
             if self._current_date != today:
                 if self._current_date:
-                    print(LOG_MESSAGES['cache_delete'].format(date=self._current_date))
+                    logger.info(LOG_MESSAGES['cache_delete'].format(date=self._current_date))
                 self._current_date = today
                 self._menus = {}
 
             # 캐시 확인
             if meal_type in self._menus:
-                print(LOG_MESSAGES['cache_hit'].format(date=today, meal_type=meal_type))
+                logger.info(LOG_MESSAGES['cache_hit'].format(date=today, meal_type=meal_type))
                 return self._menus[meal_type]
 
             return None
@@ -83,7 +87,7 @@ class MenuCache:
             today = self._get_kst_date()
             self._current_date = today
             self._menus[meal_type] = menu_data
-            print(LOG_MESSAGES['cache_save'].format(date=today, meal_type=meal_type))
+            logger.info(LOG_MESSAGES['cache_save'].format(date=today, meal_type=meal_type))
 
 
 # 전역 캐시 인스턴스
@@ -155,7 +159,7 @@ class MenuCollector:
 
             async with self.session.post(KAIST_MENU_URL, data=data) as response:
                 if response.status != 200:
-                    print(f"{restaurant_name} - HTTP {response.status} 에러")
+                    logger.warning(f"{restaurant_name} - HTTP {response.status} 에러")
                     return []
 
                 html = await response.text()
@@ -172,15 +176,15 @@ class MenuCollector:
                     return []
 
                 menus = self.parser.parse_menu_rows(table, headers, meal_type)
-                print(f"{restaurant_name}: {len(menus)}개 메뉴")
+                logger.debug(f"{restaurant_name}: {len(menus)}개 메뉴")
 
                 return menus
 
         except aiohttp.ClientError as e:
-            print(f"{restaurant_name} - 네트워크 에러: {e}")
+            logger.error(f"{restaurant_name} - 네트워크 에러: {e}")
             return []
         except Exception as e:
-            print(f"{restaurant_name} - 에러: {e}")
+            logger.error(f"{restaurant_name} - 에러: {e}")
             return []
 
     async def fetch_all_restaurants(
@@ -199,7 +203,7 @@ class MenuCollector:
             # 서버 부하 방지를 위한 딜레이
             await asyncio.sleep(REQUEST_DELAY_SECONDS)
 
-        print(f"\n최종 결과: {len(menu_infos)}개 식당")
+        logger.info(f"최종 결과: {len(menu_infos)}개 식당")
         return menu_infos
 
 
@@ -220,14 +224,14 @@ async def get_menus_by_meal_type(meal_type: str) -> Dict[str, list[str]]:
 
     # 유효성 검증
     if meal_type not in RESTAURANTS_BY_MEAL_TYPE:
-        print(f"❌ 유효하지 않은 meal_type: {meal_type}")
+        logger.error(f"❌ 유효하지 않은 meal_type: {meal_type}")
         return {}
 
     # 식당 정보 준비
     restaurants = RESTAURANTS_BY_MEAL_TYPE[meal_type]
     restaurant_infos = [(code, RESTAURANT_CODES[code]) for code in restaurants]
 
-    print(f"메뉴 조회: {meal_type}")
+    logger.info(f"메뉴 조회: {meal_type}")
 
     # 메뉴 수집
     async with aiohttp.ClientSession() as session:

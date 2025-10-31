@@ -6,10 +6,14 @@ Discord 스티커 사용 통계 분석 모듈
 - 스티커 사용 통계 수집
 - Discord Embed 포맷팅
 """
+import logging
 from typing import Dict, Optional, Any
 import discord
 
 from config import DISCORD_EMBED_MAX_FIELDS
+
+# 로거 설정
+logger = logging.getLogger(__name__)
 
 
 # ==================== Channel Parsing ====================
@@ -87,7 +91,7 @@ class StickerAnalyzer:
         """서버 스티커 목록 초기화"""
         guild_stickers = await self.guild.fetch_stickers()
         self.guild_sticker_ids = {sticker.id for sticker in guild_stickers}
-        print(f"서버 스티커 수: {len(self.guild_sticker_ids)}개")
+        logger.debug(f"서버 스티커 수: {len(self.guild_sticker_ids)}개")
 
     async def collect_stats(
         self,
@@ -131,7 +135,7 @@ class StickerAnalyzer:
             except discord.Forbidden:
                 raise PermissionError(f"{channel.mention} 채널을 읽을 권한이 없습니다.")
             except Exception as e:
-                print(f"채널 {channel.name} 읽기 중 에러: {e}")
+                logger.error(f"채널 {channel.name} 읽기 중 에러: {e}")
 
         return {
             'sticker_counts': sticker_counts,

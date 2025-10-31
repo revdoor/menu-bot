@@ -1,6 +1,8 @@
 """
 봇 설정 및 상수 정의
 """
+import logging
+import sys
 from datetime import timezone, timedelta
 from typing import Dict, List
 
@@ -50,3 +52,31 @@ LOG_MESSAGES = {
     'ping_warning': "⚠️ Ping 응답 이상: {status}",
     'ping_failed': "❌ Ping 실패: {error}"
 }
+
+# 로깅 설정
+LOG_LEVEL = logging.INFO
+LOG_FORMAT = '%(asctime)s - %(name)s - %(levelname)s - %(message)s'
+LOG_DATE_FORMAT = '%Y-%m-%d %H:%M:%S'
+
+
+def setup_logging(level: int = LOG_LEVEL) -> None:
+    """
+    로깅 시스템 초기화
+
+    Args:
+        level: 로그 레벨 (기본값: INFO)
+    """
+    # 루트 로거 설정
+    logging.basicConfig(
+        level=level,
+        format=LOG_FORMAT,
+        datefmt=LOG_DATE_FORMAT,
+        handlers=[
+            logging.StreamHandler(sys.stdout)
+        ]
+    )
+
+    # 외부 라이브러리 로그 레벨 조정 (노이즈 감소)
+    logging.getLogger('discord').setLevel(logging.WARNING)
+    logging.getLogger('discord.http').setLevel(logging.WARNING)
+    logging.getLogger('aiohttp').setLevel(logging.WARNING)
