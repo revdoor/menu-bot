@@ -508,8 +508,8 @@ async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None
         logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
         logger.debug(f"현재 세션 정보 - 메뉴 수: {len(session.menus)}, message_id: {session.message_id}")
 
-        # 메인 메시지 업데이트 (백그라운드에서)
-        asyncio.create_task(update_voting_message(interaction.guild, session))
+        # 메인 메시지 업데이트
+        await update_voting_message(interaction.guild, session)
 
     except discord.errors.NotFound as e:
         logger.warning(f"⚠️ 메뉴제안 인터랙션 NotFound 에러: {e} (사용자: {interaction.user.name})")
@@ -577,8 +577,8 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
         await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!", ephemeral=True)
         logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
 
-        # 메인 메시지 업데이트 (백그라운드에서)
-        asyncio.create_task(update_voting_message(interaction.guild, session))
+        # 메인 메시지 업데이트
+        await update_voting_message(interaction.guild, session)
 
     except discord.errors.NotFound as e:
         logger.warning(f"⚠️ 메뉴제안취소 인터랙션 NotFound 에러: {e}")

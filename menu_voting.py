@@ -393,9 +393,8 @@ class VotingFormView(View):
             )
             logger.info(f"투표 제출: user_id={self.user_id} - {len(self.user_votes)}개 메뉴")
 
-            # 메인 투표 메시지 업데이트 (투표 현황 반영) - 백그라운드에서
-            import asyncio
-            asyncio.create_task(self._update_main_message(interaction))
+            # 메인 투표 메시지 업데이트 (투표 현황 반영)
+            await self._update_main_message(interaction)
 
         button.callback = callback
         self.add_item(button)
