@@ -461,16 +461,11 @@ class VotingFormView(View):
             return
 
         try:
-            channel = interaction.guild.get_channel(self.session.channel_id)
-            if not channel:
-                return
-
-            message = await channel.fetch_message(self.session.message_id)
-
-            # 투표 진행 중이면 투표 Embed 업데이트 (View는 persistent하므로 다시 보낼 필요 없음)
+            # 투표 진행 중이면 투표 Embed 업데이트
             if self.session.voting_started and not self.session.voting_closed:
                 updated_embed = create_voting_embed(self.session)
-                await message.edit(embed=updated_embed)
+                # followup.edit_message로 원본 메시지 수정 (View 유지됨)
+                await interaction.followup.edit_message(self.session.message_id, embed=updated_embed)
                 logger.info(f"투표 현황 업데이트: {len(self.session.votes)}명 투표 완료")
         except Exception as e:
             logger.warning(f"메인 메시지 업데이트 실패: {e}")
