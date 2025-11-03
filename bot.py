@@ -22,6 +22,11 @@ from discord.ext import commands
 from menu_collector import get_menus_by_meal_type, format_menu_for_discord
 from sticker_stats import parse_channels, StickerAnalyzer, create_sticker_embed
 from tts_manager import TTSManager
+from menu_voting import (
+    VotingManager,
+    MenuProposalView,
+    create_proposal_embed
+)
 from config import (
     PING_INTERVAL_SECONDS,
     HEALTH_CHECK_PORT,
@@ -61,6 +66,9 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 # TTS 관리자 인스턴스
 tts_manager = TTSManager()
+
+# 투표 관리자 인스턴스
+voting_manager = VotingManager()
 
 
 # ==================== Error Handling ====================
@@ -371,6 +379,129 @@ async def tts_stop(interaction: discord.Interaction) -> None:
 
     await interaction.followup.send("✅ TTS를 종료했습니다!")
     logger.info(f"TTS 종료: 서버={interaction.guild.name}")
+
+
+# ==================== Menu Voting Commands ====================
+
+@bot.tree.command(name='투표시작', description='메뉴 투표를 시작합니다')
+@app_commands.describe(제목='투표 제목 (예: 오늘 점심 메뉴)')
+@handle_interaction_errors
+async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
+    """투표 시작 명령어"""
+    await interaction.response.defer()
+
+    guild_id = interaction.guild.id
+    channel_id = interaction.channel.id
+    creator_id = interaction.user.id
+
+    # 이미 진행 중인 투표 확인
+    existing_session = voting_manager.get_session(guild_id)
+    if existing_session:
+        await interaction.followup.send(
+            f"❌ 이미 진행 중인 투표가 있습니다!\n"
+            f"제목: **{existing_session.title}**\n"
+            f"먼저 진행 중인 투표를 종료해주세요."
+        )
+        return
+
+    # 새 투표 세션 생성
+    session = voting_manager.create_session(guild_id, channel_id, creator_id, 제목)
+    if not session:
+        await interaction.followup.send("❌ 투표 세션 생성에 실패했습니다.")
+        return
+
+    # 메뉴 제안 단계 Embed 및 View 생성
+    embed = create_proposal_embed(session)
+    view = MenuProposalView(session, voting_manager)
+
+    await interaction.followup.send(embed=embed, view=view)
+    logger.info(f"투표 세션 생성: {제목} (생성자: {interaction.user.name})")
+
+
+@bot.tree.command(name='메뉴제안', description='투표에 메뉴를 제안합니다')
+@app_commands.describe(메뉴명='제안할 메뉴 이름')
+@handle_interaction_errors
+async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None:
+    """메뉴 제안 명령어"""
+    await interaction.response.defer(ephemeral=True)
+
+    guild_id = interaction.guild.id
+    session = voting_manager.get_session(guild_id)
+
+    if not session:
+        await interaction.followup.send("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
+        return
+
+    if session.voting_started:
+        await interaction.followup.send("❌ 이미 투표가 시작되어 메뉴를 제안할 수 없습니다!", ephemeral=True)
+        return
+
+    # 메뉴 추가
+    success = session.add_menu(메뉴명, interaction.user.id)
+    if not success:
+        await interaction.followup.send(f"❌ '{메뉴명}' 메뉴는 이미 제안되었습니다!", ephemeral=True)
+        return
+
+    await interaction.followup.send(f"✅ '{메뉴명}' 메뉴가 제안되었습니다!", ephemeral=True)
+    logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
+
+    # 메인 메시지 업데이트 (채널에서 찾아서 업데이트)
+    try:
+        channel = interaction.guild.get_channel(session.channel_id)
+        if channel:
+            # 최근 메시지 중 투표 메시지 찾기 (간단히 하기 위해 마지막 10개만 확인)
+            async for message in channel.history(limit=10):
+                if message.author.id == bot.user.id and message.embeds:
+                    embed = message.embeds[0]
+                    if embed.title and session.title in embed.title:
+                        # Embed 업데이트
+                        updated_embed = create_proposal_embed(session)
+                        await message.edit(embed=updated_embed)
+                        break
+    except Exception as e:
+        logger.warning(f"메시지 업데이트 실패: {e}")
+
+
+@bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다')
+@app_commands.describe(메뉴명='취소할 메뉴 이름')
+@handle_interaction_errors
+async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str) -> None:
+    """메뉴 제안 취소 명령어"""
+    await interaction.response.defer(ephemeral=True)
+
+    guild_id = interaction.guild.id
+    session = voting_manager.get_session(guild_id)
+
+    if not session:
+        await interaction.followup.send("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
+        return
+
+    # 메뉴 삭제
+    success = session.remove_menu(메뉴명, interaction.user.id)
+    if not success:
+        await interaction.followup.send(
+            f"❌ '{메뉴명}' 메뉴를 취소할 수 없습니다.\n"
+            f"(메뉴가 존재하지 않거나, 본인이 제안한 메뉴가 아니거나, 이미 투표가 시작되었습니다)",
+            ephemeral=True
+        )
+        return
+
+    await interaction.followup.send(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!", ephemeral=True)
+    logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
+
+    # 메인 메시지 업데이트
+    try:
+        channel = interaction.guild.get_channel(session.channel_id)
+        if channel:
+            async for message in channel.history(limit=10):
+                if message.author.id == bot.user.id and message.embeds:
+                    embed = message.embeds[0]
+                    if embed.title and session.title in embed.title:
+                        updated_embed = create_proposal_embed(session)
+                        await message.edit(embed=updated_embed)
+                        break
+    except Exception as e:
+        logger.warning(f"메시지 업데이트 실패: {e}")
 
 
 # ==================== Bot Start ====================
