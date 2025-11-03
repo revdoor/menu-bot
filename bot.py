@@ -25,6 +25,7 @@ from sticker_stats import parse_channels, StickerAnalyzer, create_sticker_embed
 from tts_manager import TTSManager
 from menu_voting import (
     VotingManager,
+    VotingSession,
     MenuProposalView,
     create_proposal_embed
 )
