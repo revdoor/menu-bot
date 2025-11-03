@@ -137,10 +137,16 @@ async def on_ready() -> None:
     logger.info(f'봇 ID: {bot.user.id}')
 
     try:
+        # 명령어 동기화 (글로벌)
         synced = await bot.tree.sync()
-        logger.info(f'{len(synced)}개의 슬래시 명령어가 동기화되었습니다.')
+        logger.info(f'✅ {len(synced)}개의 슬래시 명령어가 동기화되었습니다.')
+
+        # 동기화된 명령어 목록 출력
+        command_names = [cmd.name for cmd in synced]
+        logger.info(f'동기화된 명령어: {", ".join(command_names)}')
+
     except Exception as e:
-        logger.error(f'동기화 실패: {e}')
+        logger.error(f'❌ 동기화 실패: {e}', exc_info=True)
 
     logger.info('------')
 
