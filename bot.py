@@ -89,7 +89,7 @@ def handle_interaction_errors(func):
             return await func(interaction, *args, **kwargs)
 
         except discord.errors.NotFound:
-            logger.warning("⚠️ 인터랙션 타이밍 에러 - 무시함")
+            logger.warning(f"⚠️ 인터랙션 타이밍 에러 (NotFound) - 무시함 (함수: {func.__name__}, 사용자: {interaction.user.name if hasattr(interaction, 'user') else 'Unknown'})")
 
         except Exception as e:
             logger.error(f"❌ {func.__name__} 중 에러 발생: {e}", exc_info=True)
@@ -415,9 +415,9 @@ async def update_voting_message(guild: discord.Guild, session: VotingSession) ->
             if updated_embed.fields:
                 logger.debug(f"첫 번째 필드 값: {updated_embed.fields[0].value[:100]}")
 
-        # 중요: 기존 View를 유지하면서 Embed만 업데이트
-        await message.edit(embed=updated_embed)
-        logger.info(f"✅ 메시지 Embed 업데이트 완료: {session.title} (메뉴: {len(session.menus)}개)")
+        # Embed와 View를 함께 업데이트 (View를 다시 보내야 버튼이 제대로 작동함)
+        await message.edit(embed=updated_embed, view=view)
+        logger.info(f"✅ 메시지 업데이트 완료: {session.title} (메뉴: {len(session.menus)}개)")
     except discord.NotFound:
         logger.error(f"메시지 업데이트 실패: 메시지를 찾을 수 없음 (message_id: {session.message_id})")
     except discord.Forbidden:

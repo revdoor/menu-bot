@@ -150,7 +150,7 @@ class MenuProposalView(View):
         self.session = session
         self.manager = manager
 
-    @discord.ui.button(label="제안 마감 및 투표 시작", style=discord.ButtonStyle.primary, custom_id="close_proposals")
+    @discord.ui.button(label="제안 마감 및 투표 시작", style=discord.ButtonStyle.primary, custom_id="close_proposals_btn")
     async def close_proposals(self, interaction: discord.Interaction, button: Button):
         """제안 마감 버튼"""
         # 세션 생성자만 마감 가능
@@ -187,7 +187,7 @@ class MenuProposalView(View):
 
         logger.info(f"투표 시작: {self.session.title} ({len(self.session.menus)}개 메뉴)")
 
-    @discord.ui.button(label="투표 취소", style=discord.ButtonStyle.danger, custom_id="cancel_voting")
+    @discord.ui.button(label="투표 취소", style=discord.ButtonStyle.danger, custom_id="cancel_voting_btn")
     async def cancel_voting(self, interaction: discord.Interaction, button: Button):
         """투표 취소 버튼"""
         if interaction.user.id != self.session.creator_id:
@@ -217,7 +217,7 @@ class VotingView(View):
         self.session = session
         self.manager = manager
 
-    @discord.ui.button(label="투표하기", style=discord.ButtonStyle.success, custom_id="start_vote")
+    @discord.ui.button(label="투표하기", style=discord.ButtonStyle.success, custom_id="start_vote_btn")
     async def start_vote(self, interaction: discord.Interaction, button: Button):
         """투표하기 버튼"""
         if self.session.voting_closed:
@@ -258,7 +258,7 @@ class VotingView(View):
             view=form_view
         )
 
-    @discord.ui.button(label="투표 종료 및 결과 보기", style=discord.ButtonStyle.danger, custom_id="close_vote")
+    @discord.ui.button(label="투표 종료 및 결과 보기", style=discord.ButtonStyle.danger, custom_id="close_vote_btn")
     async def close_vote(self, interaction: discord.Interaction, button: Button):
         """투표 종료 버튼"""
         if interaction.user.id != self.session.creator_id:
@@ -412,10 +412,11 @@ class VotingFormView(View):
 
             message = await channel.fetch_message(self.session.message_id)
 
-            # 투표 진행 중이면 투표 Embed만 업데이트 (View는 유지)
+            # 투표 진행 중이면 투표 Embed와 View 업데이트
             if self.session.voting_started and not self.session.voting_closed:
                 updated_embed = create_voting_embed(self.session)
-                await message.edit(embed=updated_embed)
+                view = VotingView(self.session, self.manager)
+                await message.edit(embed=updated_embed, view=view)
                 logger.info(f"투표 현황 업데이트: {len(self.session.votes)}명 투표 완료")
         except Exception as e:
             logger.warning(f"메인 메시지 업데이트 실패: {e}")
