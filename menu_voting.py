@@ -411,11 +411,10 @@ class VotingFormView(View):
 
             message = await channel.fetch_message(self.session.message_id)
 
-            # 투표 진행 중이면 투표 Embed와 View 업데이트
+            # 투표 진행 중이면 투표 Embed 업데이트 (View는 persistent하므로 다시 보낼 필요 없음)
             if self.session.voting_started and not self.session.voting_closed:
                 updated_embed = create_voting_embed(self.session)
-                view = VotingView(self.session, self.manager)
-                await message.edit(embed=updated_embed, view=view)
+                await message.edit(embed=updated_embed)
                 logger.info(f"투표 현황 업데이트: {len(self.session.votes)}명 투표 완료")
         except Exception as e:
             logger.warning(f"메인 메시지 업데이트 실패: {e}")
@@ -496,6 +495,8 @@ def create_proposal_embed(session: VotingSession) -> discord.Embed:
         description="메뉴를 제안해주세요! `/메뉴제안 <메뉴명>` 명령어를 사용하세요.",
         color=discord.Color.blue()
     )
+
+    logger.debug(f"제안된 메뉴: {session.menus}")
 
     if session.menus:
         menu_list = "\n".join([f"• {menu}" for menu in session.menus.keys()])

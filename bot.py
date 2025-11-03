@@ -408,21 +408,19 @@ async def update_voting_message(guild: discord.Guild, session: VotingSession) ->
 
         # 투표 시작 전이면 제안 Embed, 시작 후면 투표 Embed
         if session.voting_started:
-            from menu_voting import create_voting_embed, VotingView
+            from menu_voting import create_voting_embed
             updated_embed = create_voting_embed(session)
-            view = VotingView(session, voting_manager)
             logger.debug("투표 진행 중 Embed 생성")
         else:
-            from menu_voting import create_proposal_embed, MenuProposalView
+            from menu_voting import create_proposal_embed
             updated_embed = create_proposal_embed(session)
-            view = MenuProposalView(session, voting_manager)
             logger.debug(f"제안 단계 Embed 생성 (메뉴 수: {len(session.menus)})")
             logger.debug(f"새 Embed 필드 수: {len(updated_embed.fields)}")
             if updated_embed.fields:
                 logger.debug(f"첫 번째 필드 값: {updated_embed.fields[0].value[:100]}")
 
-        # Embed와 View를 함께 업데이트 (View를 다시 보내야 버튼이 제대로 작동함)
-        await message.edit(embed=updated_embed, view=view)
+        # Embed만 업데이트 (View는 persistent하므로 다시 보낼 필요 없음)
+        await message.edit(embed=updated_embed)
         logger.info(f"✅ 메시지 업데이트 완료: {session.title} (메뉴: {len(session.menus)}개)")
     except discord.NotFound:
         logger.error(f"메시지 업데이트 실패: 메시지를 찾을 수 없음 (message_id: {session.message_id})")
