@@ -388,28 +388,38 @@ async def tts_stop(interaction: discord.Interaction) -> None:
 async def update_voting_message(guild: discord.Guild, session: VotingSession) -> None:
     """투표 메시지 업데이트 헬퍼 함수"""
     if not session.message_id:
+        logger.warning(f"메시지 업데이트 실패: message_id가 없음 (세션: {session.title})")
         return
 
     try:
         channel = guild.get_channel(session.channel_id)
         if not channel:
+            logger.warning(f"메시지 업데이트 실패: 채널을 찾을 수 없음 (channel_id: {session.channel_id})")
             return
 
         message = await channel.fetch_message(session.message_id)
+        logger.debug(f"메시지 찾음: {session.message_id}")
 
         # 투표 시작 전이면 제안 Embed, 시작 후면 투표 Embed
         if session.voting_started:
             from menu_voting import create_voting_embed, VotingView
             updated_embed = create_voting_embed(session)
             view = VotingView(session, voting_manager)
+            logger.debug("투표 진행 중 Embed 생성")
         else:
             from menu_voting import create_proposal_embed, MenuProposalView
             updated_embed = create_proposal_embed(session)
             view = MenuProposalView(session, voting_manager)
+            logger.debug(f"제안 단계 Embed 생성 (메뉴 수: {len(session.menus)})")
 
         await message.edit(embed=updated_embed, view=view)
+        logger.info(f"✅ 메시지 업데이트 완료: {session.title}")
+    except discord.NotFound:
+        logger.error(f"메시지 업데이트 실패: 메시지를 찾을 수 없음 (message_id: {session.message_id})")
+    except discord.Forbidden:
+        logger.error(f"메시지 업데이트 실패: 권한 없음 (message_id: {session.message_id})")
     except Exception as e:
-        logger.warning(f"메시지 업데이트 실패: {e}")
+        logger.error(f"메시지 업데이트 실패: {e}", exc_info=True)
 
 
 @bot.tree.command(name='투표시작', description='메뉴 투표를 시작합니다')
@@ -443,10 +453,14 @@ async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
     embed = create_proposal_embed(session)
     view = MenuProposalView(session, voting_manager)
 
-    message = await interaction.followup.send(embed=embed, view=view)
+    message = await interaction.followup.send(embed=embed, view=view, wait=True)
 
     # 메시지 ID 저장 (갱신용)
-    session.message_id = message.id
+    if message:
+        session.message_id = message.id
+        logger.info(f"투표 메시지 ID 저장: {message.id}")
+    else:
+        logger.error("메시지 객체를 받지 못함!")
 
     logger.info(f"투표 세션 생성: {제목} (생성자: {interaction.user.name})")
 
@@ -477,6 +491,7 @@ async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None
 
     await interaction.followup.send(f"✅ '{메뉴명}' 메뉴가 제안되었습니다!", ephemeral=True)
     logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
+    logger.debug(f"현재 세션 정보 - 메뉴 수: {len(session.menus)}, message_id: {session.message_id}")
 
     # 메인 메시지 업데이트
     await update_voting_message(interaction.guild, session)
