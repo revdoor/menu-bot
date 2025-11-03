@@ -153,6 +153,20 @@ class MenuProposalView(View):
     @discord.ui.button(label="제안 마감 및 투표 시작", style=discord.ButtonStyle.primary, custom_id="close_proposals_btn")
     async def close_proposals(self, interaction: discord.Interaction, button: Button):
         """제안 마감 버튼"""
+        # 세션이 존재하는지 확인
+        current_session = self.manager.get_session(self.session.guild_id)
+        if not current_session:
+            await interaction.response.send_message(
+                "❌ 세션이 만료되었습니다. 이 메시지를 삭제합니다.",
+                ephemeral=True
+            )
+            try:
+                await interaction.message.delete()
+                logger.info(f"고아 투표 메시지 삭제: message_id={interaction.message.id}")
+            except:
+                pass
+            return
+
         # 세션 생성자만 마감 가능
         if interaction.user.id != self.session.creator_id:
             await interaction.response.send_message(
@@ -190,6 +204,20 @@ class MenuProposalView(View):
     @discord.ui.button(label="투표 취소", style=discord.ButtonStyle.danger, custom_id="cancel_voting_btn")
     async def cancel_voting(self, interaction: discord.Interaction, button: Button):
         """투표 취소 버튼"""
+        # 세션이 존재하는지 확인
+        current_session = self.manager.get_session(self.session.guild_id)
+        if not current_session:
+            await interaction.response.send_message(
+                "❌ 세션이 만료되었습니다. 이 메시지를 삭제합니다.",
+                ephemeral=True
+            )
+            try:
+                await interaction.message.delete()
+                logger.info(f"고아 투표 메시지 삭제: message_id={interaction.message.id}")
+            except:
+                pass
+            return
+
         if interaction.user.id != self.session.creator_id:
             await interaction.response.send_message(
                 "❌ 투표를 시작한 사람만 취소할 수 있습니다!",
@@ -220,6 +248,20 @@ class VotingView(View):
     @discord.ui.button(label="투표하기", style=discord.ButtonStyle.success, custom_id="start_vote_btn")
     async def start_vote(self, interaction: discord.Interaction, button: Button):
         """투표하기 버튼"""
+        # 세션이 존재하는지 확인
+        current_session = self.manager.get_session(self.session.guild_id)
+        if not current_session:
+            await interaction.response.send_message(
+                "❌ 세션이 만료되었습니다. 이 메시지를 삭제합니다.",
+                ephemeral=True
+            )
+            try:
+                await interaction.message.delete()
+                logger.info(f"고아 투표 메시지 삭제: message_id={interaction.message.id}")
+            except:
+                pass
+            return
+
         if self.session.voting_closed:
             await interaction.response.send_message(
                 "❌ 이미 종료된 투표입니다!",
@@ -261,6 +303,20 @@ class VotingView(View):
     @discord.ui.button(label="투표 종료 및 결과 보기", style=discord.ButtonStyle.danger, custom_id="close_vote_btn")
     async def close_vote(self, interaction: discord.Interaction, button: Button):
         """투표 종료 버튼"""
+        # 세션이 존재하는지 확인
+        current_session = self.manager.get_session(self.session.guild_id)
+        if not current_session:
+            await interaction.response.send_message(
+                "❌ 세션이 만료되었습니다. 이 메시지를 삭제합니다.",
+                ephemeral=True
+            )
+            try:
+                await interaction.message.delete()
+                logger.info(f"고아 투표 메시지 삭제: message_id={interaction.message.id}")
+            except:
+                pass
+            return
+
         if interaction.user.id != self.session.creator_id:
             await interaction.response.send_message(
                 "❌ 투표를 시작한 사람만 종료할 수 있습니다!",

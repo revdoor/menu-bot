@@ -432,45 +432,56 @@ async def update_voting_message(guild: discord.Guild, session: VotingSession) ->
 
 @bot.tree.command(name='투표시작', description='메뉴 투표를 시작합니다')
 @app_commands.describe(제목='투표 제목 (예: 오늘 점심 메뉴)')
-@handle_interaction_errors
 async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
     """투표 시작 명령어"""
-    await interaction.response.defer()
+    try:
+        guild_id = interaction.guild.id
+        channel_id = interaction.channel.id
+        creator_id = interaction.user.id
 
-    guild_id = interaction.guild.id
-    channel_id = interaction.channel.id
-    creator_id = interaction.user.id
+        # 이미 진행 중인 투표 확인
+        existing_session = voting_manager.get_session(guild_id)
+        if existing_session:
+            await interaction.response.send_message(
+                f"❌ 이미 진행 중인 투표가 있습니다!\n"
+                f"제목: **{existing_session.title}**\n"
+                f"먼저 진행 중인 투표를 종료해주세요.",
+                ephemeral=True
+            )
+            return
 
-    # 이미 진행 중인 투표 확인
-    existing_session = voting_manager.get_session(guild_id)
-    if existing_session:
-        await interaction.followup.send(
-            f"❌ 이미 진행 중인 투표가 있습니다!\n"
-            f"제목: **{existing_session.title}**\n"
-            f"먼저 진행 중인 투표를 종료해주세요."
-        )
-        return
+        # 새 투표 세션 생성
+        session = voting_manager.create_session(guild_id, channel_id, creator_id, 제목)
+        if not session:
+            await interaction.response.send_message("❌ 투표 세션 생성에 실패했습니다.", ephemeral=True)
+            return
 
-    # 새 투표 세션 생성
-    session = voting_manager.create_session(guild_id, channel_id, creator_id, 제목)
-    if not session:
-        await interaction.followup.send("❌ 투표 세션 생성에 실패했습니다.")
-        return
+        logger.info(f"✅ 투표 세션 생성됨 - guild_id: {guild_id}, 제목: {제목}")
+        logger.debug(f"현재 활성 세션: {list(voting_manager.sessions.keys())}")
 
-    logger.info(f"✅ 투표 세션 생성됨 - guild_id: {guild_id}, 제목: {제목}")
-    logger.debug(f"현재 활성 세션: {list(voting_manager.sessions.keys())}")
+        # 메뉴 제안 단계 Embed 및 View 생성
+        embed = create_proposal_embed(session)
+        view = MenuProposalView(session, voting_manager)
 
-    # 메뉴 제안 단계 Embed 및 View 생성
-    embed = create_proposal_embed(session)
-    view = MenuProposalView(session, voting_manager)
+        await interaction.response.send_message(embed=embed, view=view)
 
-    message = await interaction.followup.send(embed=embed, view=view)
+        # 메시지 ID 저장 (갱신용)
+        # response.send_message는 Message 객체를 반환하지 않으므로 original_response()로 가져옴
+        message = await interaction.original_response()
+        session.message_id = message.id
+        logger.info(f"투표 메시지 ID 저장: {message.id}")
 
-    # 메시지 ID 저장 (갱신용)
-    session.message_id = message.id
-    logger.info(f"투표 메시지 ID 저장: {message.id}")
+        logger.info(f"투표 세션 생성 완료: {제목} (생성자: {interaction.user.name})")
 
-    logger.info(f"투표 세션 생성 완료: {제목} (생성자: {interaction.user.name})")
+    except discord.errors.NotFound as e:
+        logger.warning(f"⚠️ 투표시작 인터랙션 NotFound 에러: {e} (사용자: {interaction.user.name})")
+    except Exception as e:
+        logger.error(f"❌ 투표시작 중 에러 발생: {e}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
+        except:
+            pass
 
 
 @bot.tree.command(name='메뉴제안', description='투표에 메뉴를 제안합니다')
@@ -582,6 +593,41 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
         logger.warning(f"⚠️ 메뉴제안취소 인터랙션 NotFound 에러: {e}")
     except Exception as e:
         logger.error(f"❌ 메뉴제안취소 중 에러 발생: {e}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
+        except:
+            pass
+
+
+@bot.tree.command(name='세션초기화', description='[관리자 전용] 투표 세션을 강제로 초기화합니다')
+async def reset_session(interaction: discord.Interaction) -> None:
+    """세션 강제 초기화 명령어 (revdoor 전용)"""
+    try:
+        # revdoor만 사용 가능
+        if interaction.user.name != "revdoor":
+            await interaction.response.send_message("❌ 이 명령어는 관리자만 사용할 수 있습니다!", ephemeral=True)
+            return
+
+        guild_id = interaction.guild.id
+        session = voting_manager.get_session(guild_id)
+
+        if not session:
+            await interaction.response.send_message("❌ 초기화할 세션이 없습니다!", ephemeral=True)
+            return
+
+        # 세션 강제 종료
+        voting_manager.close_session(guild_id)
+
+        await interaction.response.send_message(
+            f"✅ 투표 세션이 강제로 초기화되었습니다!\n"
+            f"제목: **{session.title}**",
+            ephemeral=True
+        )
+        logger.warning(f"⚠️ 세션 강제 초기화: {session.title} (사용자: {interaction.user.name})")
+
+    except Exception as e:
+        logger.error(f"❌ 세션초기화 중 에러 발생: {e}", exc_info=True)
         try:
             if not interaction.response.is_done():
                 await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
