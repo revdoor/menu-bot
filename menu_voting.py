@@ -39,6 +39,9 @@ class VotingSession:
     # 투표 완료 여부
     voting_closed: bool = False
 
+    # 메인 투표 메시지 ID (갱신용)
+    message_id: Optional[int] = None
+
     def add_menu(self, menu_name: str, proposer_id: int) -> bool:
         """메뉴 제안 추가"""
         if self.voting_started:
@@ -388,8 +391,31 @@ class VotingFormView(View):
             )
             logger.info(f"투표 제출: user_id={self.user_id} - {len(self.user_votes)}개 메뉴")
 
+            # 메인 투표 메시지 업데이트 (투표 현황 반영)
+            await self._update_main_message(interaction)
+
         button.callback = callback
         self.add_item(button)
+
+    async def _update_main_message(self, interaction: discord.Interaction):
+        """메인 투표 메시지 업데이트"""
+        if not self.session.message_id:
+            return
+
+        try:
+            channel = interaction.guild.get_channel(self.session.channel_id)
+            if not channel:
+                return
+
+            message = await channel.fetch_message(self.session.message_id)
+
+            # 투표 진행 중이면 투표 Embed 업데이트
+            if self.session.voting_started and not self.session.voting_closed:
+                updated_embed = create_voting_embed(self.session)
+                view = VotingView(self.session, self.manager)
+                await message.edit(embed=updated_embed, view=view)
+        except Exception as e:
+            logger.warning(f"메인 메시지 업데이트 실패: {e}")
 
 
 class ScoreSelectView(View):

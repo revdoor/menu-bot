@@ -1,7 +1,7 @@
 """menu_voting.py 테스트"""
 import pytest
 from datetime import datetime
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, AsyncMock, patch
 
 from menu_voting import (
     VotingSession,
@@ -36,6 +36,7 @@ class TestVotingSession:
         assert session.votes == {}
         assert session.voting_started is False
         assert session.voting_closed is False
+        assert session.message_id is None
         assert isinstance(session.created_at, datetime)
 
     def test_add_menu_success(self, session):
@@ -475,3 +476,212 @@ class TestVotingWorkflow:
         assert len(session.menus) == 1
         assert "짬뽕" in session.menus
         assert "짜장면" not in session.menus
+
+
+@pytest.mark.unit
+class TestMessageUpdates:
+    """메시지 업데이트 기능 테스트"""
+
+    def test_session_with_message_id(self):
+        """메시지 ID 저장 확인"""
+        session = VotingSession("테스트", 123, 456, 789)
+        assert session.message_id is None
+
+        # 메시지 ID 설정
+        session.message_id = 999888777
+        assert session.message_id == 999888777
+
+    def test_message_id_persists_across_operations(self):
+        """메뉴 추가/투표 등의 작업 후에도 message_id 유지"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.message_id = 111222333
+
+        # 메뉴 추가
+        session.add_menu("짜장면", 10)
+        assert session.message_id == 111222333
+
+        # 투표 시작
+        session.voting_started = True
+        assert session.message_id == 111222333
+
+        # 투표 제출
+        session.submit_vote(10, {"짜장면": 5})
+        assert session.message_id == 111222333
+
+
+@pytest.mark.unit
+class TestAutocomplete:
+    """자동완성 기능 테스트 (로직 검증)"""
+
+    def test_get_user_menus(self):
+        """사용자가 제안한 메뉴만 필터링"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("짜장면", 10)
+        session.add_menu("짬뽕", 20)
+        session.add_menu("탕수육", 10)
+        session.add_menu("볶음밥", 30)
+
+        # 사용자 10이 제안한 메뉴
+        user_10_menus = [
+            menu for menu, proposer_id in session.menus.items()
+            if proposer_id == 10
+        ]
+
+        assert len(user_10_menus) == 2
+        assert "짜장면" in user_10_menus
+        assert "탕수육" in user_10_menus
+        assert "짬뽕" not in user_10_menus
+        assert "볶음밥" not in user_10_menus
+
+    def test_autocomplete_filtering(self):
+        """자동완성 필터링 로직"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("짜장면", 10)
+        session.add_menu("짬뽕", 10)
+        session.add_menu("탕수육", 10)
+
+        user_menus = [
+            menu for menu in session.menus.keys()
+            if session.menus[menu] == 10
+        ]
+
+        # "짜" 검색
+        filtered = [m for m in user_menus if "짜" in m.lower()]
+        assert len(filtered) == 1  # 짜장면
+
+        # "탕" 검색
+        filtered = [m for m in user_menus if "탕" in m.lower()]
+        assert len(filtered) == 1  # 탕수육
+
+
+@pytest.mark.integration
+class TestRealtimeUpdates:
+    """실시간 업데이트 통합 테스트"""
+
+    def test_menu_proposal_flow_with_message_id(self):
+        """메뉴 제안 흐름에서 메시지 ID 사용"""
+        manager = VotingManager()
+        session = manager.create_session(123, 456, 789, "점심 메뉴")
+
+        # 메시지 ID 설정 (봇이 메시지 전송 후)
+        session.message_id = 999888777
+
+        # 메뉴 제안들
+        session.add_menu("짜장면", 10)
+        session.add_menu("짬뽕", 20)
+
+        # 메시지 ID는 여전히 유지
+        assert session.message_id == 999888777
+
+        # 메뉴 취소
+        session.remove_menu("짜장면", 10)
+        assert session.message_id == 999888777
+
+    def test_voting_flow_with_updates(self):
+        """투표 흐름에서 실시간 업데이트"""
+        manager = VotingManager()
+        session = manager.create_session(123, 456, 789, "저녁 메뉴")
+        session.message_id = 111222333
+
+        # 메뉴 제안
+        session.add_menu("피자", 1)
+        session.add_menu("치킨", 2)
+
+        # 투표 시작
+        session.voting_started = True
+        assert len(session.votes) == 0
+
+        # 투표 1
+        session.submit_vote(10, {"피자": 5, "치킨": 4})
+        assert len(session.votes) == 1
+
+        # 투표 2
+        session.submit_vote(20, {"피자": 3, "치킨": 5})
+        assert len(session.votes) == 2
+
+        # 메시지 ID는 변경되지 않음
+        assert session.message_id == 111222333
+
+    def test_vote_count_updates(self):
+        """투표 현황 카운트 업데이트"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.add_menu("메뉴B", 2)
+        session.voting_started = True
+
+        # 초기 상태
+        assert len(session.votes) == 0
+
+        # 투표 1
+        session.submit_vote(10, {"메뉴A": 5, "메뉴B": 4})
+        assert len(session.votes) == 1
+
+        # 투표 2
+        session.submit_vote(20, {"메뉴A": 4, "메뉴B": 5})
+        assert len(session.votes) == 2
+
+        # 투표 3
+        session.submit_vote(30, {"메뉴A": 3, "메뉴B": 3})
+        assert len(session.votes) == 3
+
+        # 투표 수정
+        session.submit_vote(10, {"메뉴A": 1, "메뉴B": 1})
+        assert len(session.votes) == 3  # 개수는 그대로
+
+    def test_concurrent_menu_proposals(self):
+        """동시 메뉴 제안 처리"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.message_id = 999
+
+        # 여러 사용자가 동시에 메뉴 제안
+        users = [10, 20, 30, 40, 50]
+        menus = ["짜장면", "짬뽕", "탕수육", "볶음밥", "팔보채"]
+
+        for user_id, menu in zip(users, menus):
+            result = session.add_menu(menu, user_id)
+            assert result is True
+
+        assert len(session.menus) == 5
+        assert session.message_id == 999  # 메시지 ID 유지
+
+
+@pytest.mark.unit
+class TestVotingViewHelpers:
+    """투표 뷰 헬퍼 메서드 테스트"""
+
+    def test_user_specific_menu_filter(self):
+        """특정 사용자의 메뉴만 필터링"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("메뉴1", 100)
+        session.add_menu("메뉴2", 100)
+        session.add_menu("메뉴3", 200)
+        session.add_menu("메뉴4", 100)
+
+        # 사용자 100의 메뉴만
+        user_100_menus = {
+            menu: proposer
+            for menu, proposer in session.menus.items()
+            if proposer == 100
+        }
+
+        assert len(user_100_menus) == 3
+        assert "메뉴3" not in user_100_menus
+
+    def test_remaining_menus_calculation(self):
+        """아직 투표하지 않은 메뉴 계산"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("A", 1)
+        session.add_menu("B", 2)
+        session.add_menu("C", 3)
+        session.voting_started = True
+
+        # 사용자의 현재 투표 상태
+        current_votes = {"A": 5}
+
+        # 남은 메뉴
+        remaining = [m for m in session.menus.keys() if m not in current_votes]
+
+        assert len(remaining) == 2
+        assert "B" in remaining
+        assert "C" in remaining
+        assert "A" not in remaining

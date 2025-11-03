@@ -4,6 +4,7 @@ KAIST 메뉴봇 - Discord Bot
 주요 기능:
 - 메뉴 조회 (/메뉴)
 - 메뉴 랜덤 선택 (/메뉴선택)
+- 메뉴 투표 (/투표시작, /메뉴제안, /메뉴제안취소)
 - 스티커 사용 통계 (/스티커체크)
 - TTS 기능 (/tts시작, /tts종료)
 """
@@ -383,6 +384,33 @@ async def tts_stop(interaction: discord.Interaction) -> None:
 
 # ==================== Menu Voting Commands ====================
 
+async def update_voting_message(guild: discord.Guild, session: VotingSession) -> None:
+    """투표 메시지 업데이트 헬퍼 함수"""
+    if not session.message_id:
+        return
+
+    try:
+        channel = guild.get_channel(session.channel_id)
+        if not channel:
+            return
+
+        message = await channel.fetch_message(session.message_id)
+
+        # 투표 시작 전이면 제안 Embed, 시작 후면 투표 Embed
+        if session.voting_started:
+            from menu_voting import create_voting_embed, VotingView
+            updated_embed = create_voting_embed(session)
+            view = VotingView(session, voting_manager)
+        else:
+            from menu_voting import create_proposal_embed, MenuProposalView
+            updated_embed = create_proposal_embed(session)
+            view = MenuProposalView(session, voting_manager)
+
+        await message.edit(embed=updated_embed, view=view)
+    except Exception as e:
+        logger.warning(f"메시지 업데이트 실패: {e}")
+
+
 @bot.tree.command(name='투표시작', description='메뉴 투표를 시작합니다')
 @app_commands.describe(제목='투표 제목 (예: 오늘 점심 메뉴)')
 @handle_interaction_errors
@@ -414,7 +442,11 @@ async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
     embed = create_proposal_embed(session)
     view = MenuProposalView(session, voting_manager)
 
-    await interaction.followup.send(embed=embed, view=view)
+    message = await interaction.followup.send(embed=embed, view=view)
+
+    # 메시지 ID 저장 (갱신용)
+    session.message_id = message.id
+
     logger.info(f"투표 세션 생성: {제목} (생성자: {interaction.user.name})")
 
 
@@ -445,25 +477,41 @@ async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None
     await interaction.followup.send(f"✅ '{메뉴명}' 메뉴가 제안되었습니다!", ephemeral=True)
     logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
 
-    # 메인 메시지 업데이트 (채널에서 찾아서 업데이트)
-    try:
-        channel = interaction.guild.get_channel(session.channel_id)
-        if channel:
-            # 최근 메시지 중 투표 메시지 찾기 (간단히 하기 위해 마지막 10개만 확인)
-            async for message in channel.history(limit=10):
-                if message.author.id == bot.user.id and message.embeds:
-                    embed = message.embeds[0]
-                    if embed.title and session.title in embed.title:
-                        # Embed 업데이트
-                        updated_embed = create_proposal_embed(session)
-                        await message.edit(embed=updated_embed)
-                        break
-    except Exception as e:
-        logger.warning(f"메시지 업데이트 실패: {e}")
+    # 메인 메시지 업데이트
+    await update_voting_message(interaction.guild, session)
+
+
+async def menu_proposal_autocomplete(
+    interaction: discord.Interaction,
+    current: str
+) -> list[app_commands.Choice[str]]:
+    """메뉴 제안 취소를 위한 자동완성 - 본인이 제안한 메뉴만 표시"""
+    guild_id = interaction.guild.id
+    session = voting_manager.get_session(guild_id)
+
+    if not session:
+        return []
+
+    # 본인이 제안한 메뉴만 필터링
+    user_menus = [
+        menu_name for menu_name, proposer_id in session.menus.items()
+        if proposer_id == interaction.user.id
+    ]
+
+    # 현재 입력값과 매칭되는 메뉴 필터링
+    if current:
+        user_menus = [m for m in user_menus if current.lower() in m.lower()]
+
+    # 최대 25개까지만 반환 (Discord 제한)
+    return [
+        app_commands.Choice(name=menu, value=menu)
+        for menu in user_menus[:25]
+    ]
 
 
 @bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다')
 @app_commands.describe(메뉴명='취소할 메뉴 이름')
+@app_commands.autocomplete(메뉴명=menu_proposal_autocomplete)
 @handle_interaction_errors
 async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str) -> None:
     """메뉴 제안 취소 명령어"""
@@ -490,18 +538,7 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
     logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
 
     # 메인 메시지 업데이트
-    try:
-        channel = interaction.guild.get_channel(session.channel_id)
-        if channel:
-            async for message in channel.history(limit=10):
-                if message.author.id == bot.user.id and message.embeds:
-                    embed = message.embeds[0]
-                    if embed.title and session.title in embed.title:
-                        updated_embed = create_proposal_embed(session)
-                        await message.edit(embed=updated_embed)
-                        break
-    except Exception as e:
-        logger.warning(f"메시지 업데이트 실패: {e}")
+    await update_voting_message(interaction.guild, session)
 
 
 # ==================== Bot Start ====================
