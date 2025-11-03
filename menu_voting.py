@@ -176,11 +176,13 @@ class MenuProposalView(View):
         button.label = "제안 마감됨"
         button.style = discord.ButtonStyle.secondary
 
-        # 투표 뷰로 변경
+        # 투표 Embed 생성
+        embed = create_voting_embed(self.session)
+
+        # 새 투표 뷰 생성
         new_view = VotingView(self.session, self.manager)
 
-        # 메시지 업데이트
-        embed = create_voting_embed(self.session)
+        # 메시지 업데이트 (Embed와 View 모두)
         await interaction.response.edit_message(embed=embed, view=new_view)
 
         logger.info(f"투표 시작: {self.session.title} ({len(self.session.menus)}개 메뉴)")
@@ -391,8 +393,9 @@ class VotingFormView(View):
             )
             logger.info(f"투표 제출: user_id={self.user_id} - {len(self.user_votes)}개 메뉴")
 
-            # 메인 투표 메시지 업데이트 (투표 현황 반영)
-            await self._update_main_message(interaction)
+            # 메인 투표 메시지 업데이트 (투표 현황 반영) - 백그라운드에서
+            import asyncio
+            asyncio.create_task(self._update_main_message(interaction))
 
         button.callback = callback
         self.add_item(button)
@@ -409,11 +412,11 @@ class VotingFormView(View):
 
             message = await channel.fetch_message(self.session.message_id)
 
-            # 투표 진행 중이면 투표 Embed 업데이트
+            # 투표 진행 중이면 투표 Embed만 업데이트 (View는 유지)
             if self.session.voting_started and not self.session.voting_closed:
                 updated_embed = create_voting_embed(self.session)
-                view = VotingView(self.session, self.manager)
-                await message.edit(embed=updated_embed, view=view)
+                await message.edit(embed=updated_embed)
+                logger.info(f"투표 현황 업데이트: {len(self.session.votes)}명 투표 완료")
         except Exception as e:
             logger.warning(f"메인 메시지 업데이트 실패: {e}")
 

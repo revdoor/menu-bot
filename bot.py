@@ -398,7 +398,7 @@ async def update_voting_message(guild: discord.Guild, session: VotingSession) ->
             return
 
         message = await channel.fetch_message(session.message_id)
-        logger.debug(f"메시지 찾음: {session.message_id}")
+        logger.debug(f"메시지 찾음: {session.message_id}, 현재 Embed 제목: {message.embeds[0].title if message.embeds else 'None'}")
 
         # 투표 시작 전이면 제안 Embed, 시작 후면 투표 Embed
         if session.voting_started:
@@ -411,9 +411,13 @@ async def update_voting_message(guild: discord.Guild, session: VotingSession) ->
             updated_embed = create_proposal_embed(session)
             view = MenuProposalView(session, voting_manager)
             logger.debug(f"제안 단계 Embed 생성 (메뉴 수: {len(session.menus)})")
+            logger.debug(f"새 Embed 필드 수: {len(updated_embed.fields)}")
+            if updated_embed.fields:
+                logger.debug(f"첫 번째 필드 값: {updated_embed.fields[0].value[:100]}")
 
-        await message.edit(embed=updated_embed, view=view)
-        logger.info(f"✅ 메시지 업데이트 완료: {session.title}")
+        # 중요: 기존 View를 유지하면서 Embed만 업데이트
+        await message.edit(embed=updated_embed)
+        logger.info(f"✅ 메시지 Embed 업데이트 완료: {session.title} (메뉴: {len(session.menus)}개)")
     except discord.NotFound:
         logger.error(f"메시지 업데이트 실패: 메시지를 찾을 수 없음 (message_id: {session.message_id})")
     except discord.Forbidden:
@@ -493,12 +497,13 @@ async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None
         await interaction.followup.send(f"❌ '{메뉴명}' 메뉴는 이미 제안되었습니다!", ephemeral=True)
         return
 
+    # 먼저 사용자에게 응답 (3초 제한 때문에)
     await interaction.followup.send(f"✅ '{메뉴명}' 메뉴가 제안되었습니다!", ephemeral=True)
     logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
     logger.debug(f"현재 세션 정보 - 메뉴 수: {len(session.menus)}, message_id: {session.message_id}")
 
-    # 메인 메시지 업데이트
-    await update_voting_message(interaction.guild, session)
+    # 메인 메시지 업데이트 (백그라운드에서)
+    asyncio.create_task(update_voting_message(interaction.guild, session))
 
 
 async def menu_proposal_autocomplete(
@@ -554,11 +559,12 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
         )
         return
 
+    # 먼저 사용자에게 응답
     await interaction.followup.send(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!", ephemeral=True)
     logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
 
-    # 메인 메시지 업데이트
-    await update_voting_message(interaction.guild, session)
+    # 메인 메시지 업데이트 (백그라운드에서)
+    asyncio.create_task(update_voting_message(interaction.guild, session))
 
 
 # ==================== Bot Start ====================
