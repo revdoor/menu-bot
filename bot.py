@@ -449,20 +449,20 @@ async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
         await interaction.followup.send("❌ 투표 세션 생성에 실패했습니다.")
         return
 
+    logger.info(f"✅ 투표 세션 생성됨 - guild_id: {guild_id}, 제목: {제목}")
+    logger.debug(f"현재 활성 세션: {list(voting_manager.sessions.keys())}")
+
     # 메뉴 제안 단계 Embed 및 View 생성
     embed = create_proposal_embed(session)
     view = MenuProposalView(session, voting_manager)
 
-    message = await interaction.followup.send(embed=embed, view=view, wait=True)
+    message = await interaction.followup.send(embed=embed, view=view)
 
     # 메시지 ID 저장 (갱신용)
-    if message:
-        session.message_id = message.id
-        logger.info(f"투표 메시지 ID 저장: {message.id}")
-    else:
-        logger.error("메시지 객체를 받지 못함!")
+    session.message_id = message.id
+    logger.info(f"투표 메시지 ID 저장: {message.id}")
 
-    logger.info(f"투표 세션 생성: {제목} (생성자: {interaction.user.name})")
+    logger.info(f"투표 세션 생성 완료: {제목} (생성자: {interaction.user.name})")
 
 
 @bot.tree.command(name='메뉴제안', description='투표에 메뉴를 제안합니다')
@@ -473,9 +473,13 @@ async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None
     await interaction.response.defer(ephemeral=True)
 
     guild_id = interaction.guild.id
+    logger.debug(f"메뉴 제안 시도 - guild_id: {guild_id}, 메뉴: {메뉴명}")
+    logger.debug(f"현재 활성 세션: {list(voting_manager.sessions.keys())}")
+
     session = voting_manager.get_session(guild_id)
 
     if not session:
+        logger.warning(f"세션을 찾을 수 없음 - guild_id: {guild_id}")
         await interaction.followup.send("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
         return
 
