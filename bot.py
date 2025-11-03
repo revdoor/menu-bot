@@ -471,39 +471,49 @@ async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
 
 @bot.tree.command(name='메뉴제안', description='투표에 메뉴를 제안합니다')
 @app_commands.describe(메뉴명='제안할 메뉴 이름')
-@handle_interaction_errors
 async def propose_menu(interaction: discord.Interaction, 메뉴명: str) -> None:
     """메뉴 제안 명령어"""
-    await interaction.response.defer(ephemeral=True)
+    try:
+        logger.debug(f"[{interaction.user.name}] 메뉴 제안 시작: {메뉴명}")
 
-    guild_id = interaction.guild.id
-    logger.debug(f"메뉴 제안 시도 - guild_id: {guild_id}, 메뉴: {메뉴명}")
-    logger.debug(f"현재 활성 세션: {list(voting_manager.sessions.keys())}")
+        # defer 제거하고 즉시 응답 체계로 변경
+        guild_id = interaction.guild.id
+        logger.debug(f"현재 활성 세션: {list(voting_manager.sessions.keys())}")
 
-    session = voting_manager.get_session(guild_id)
+        session = voting_manager.get_session(guild_id)
 
-    if not session:
-        logger.warning(f"세션을 찾을 수 없음 - guild_id: {guild_id}")
-        await interaction.followup.send("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
-        return
+        if not session:
+            logger.warning(f"세션을 찾을 수 없음 - guild_id: {guild_id}")
+            await interaction.response.send_message("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
+            return
 
-    if session.voting_started:
-        await interaction.followup.send("❌ 이미 투표가 시작되어 메뉴를 제안할 수 없습니다!", ephemeral=True)
-        return
+        if session.voting_started:
+            await interaction.response.send_message("❌ 이미 투표가 시작되어 메뉴를 제안할 수 없습니다!", ephemeral=True)
+            return
 
-    # 메뉴 추가
-    success = session.add_menu(메뉴명, interaction.user.id)
-    if not success:
-        await interaction.followup.send(f"❌ '{메뉴명}' 메뉴는 이미 제안되었습니다!", ephemeral=True)
-        return
+        # 메뉴 추가
+        success = session.add_menu(메뉴명, interaction.user.id)
+        if not success:
+            await interaction.response.send_message(f"❌ '{메뉴명}' 메뉴는 이미 제안되었습니다!", ephemeral=True)
+            return
 
-    # 먼저 사용자에게 응답 (3초 제한 때문에)
-    await interaction.followup.send(f"✅ '{메뉴명}' 메뉴가 제안되었습니다!", ephemeral=True)
-    logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
-    logger.debug(f"현재 세션 정보 - 메뉴 수: {len(session.menus)}, message_id: {session.message_id}")
+        # 즉시 사용자에게 응답
+        await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴가 제안되었습니다!", ephemeral=True)
+        logger.info(f"메뉴 제안: {메뉴명} (제안자: {interaction.user.name})")
+        logger.debug(f"현재 세션 정보 - 메뉴 수: {len(session.menus)}, message_id: {session.message_id}")
 
-    # 메인 메시지 업데이트 (백그라운드에서)
-    asyncio.create_task(update_voting_message(interaction.guild, session))
+        # 메인 메시지 업데이트 (백그라운드에서)
+        asyncio.create_task(update_voting_message(interaction.guild, session))
+
+    except discord.errors.NotFound as e:
+        logger.warning(f"⚠️ 메뉴제안 인터랙션 NotFound 에러: {e} (사용자: {interaction.user.name})")
+    except Exception as e:
+        logger.error(f"❌ 메뉴제안 중 에러 발생: {e}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
+        except:
+            pass
 
 
 async def menu_proposal_autocomplete(
@@ -537,34 +547,42 @@ async def menu_proposal_autocomplete(
 @bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다')
 @app_commands.describe(메뉴명='취소할 메뉴 이름')
 @app_commands.autocomplete(메뉴명=menu_proposal_autocomplete)
-@handle_interaction_errors
 async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str) -> None:
     """메뉴 제안 취소 명령어"""
-    await interaction.response.defer(ephemeral=True)
+    try:
+        guild_id = interaction.guild.id
+        session = voting_manager.get_session(guild_id)
 
-    guild_id = interaction.guild.id
-    session = voting_manager.get_session(guild_id)
+        if not session:
+            await interaction.response.send_message("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
+            return
 
-    if not session:
-        await interaction.followup.send("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
-        return
+        # 메뉴 삭제
+        success = session.remove_menu(메뉴명, interaction.user.id)
+        if not success:
+            await interaction.response.send_message(
+                f"❌ '{메뉴명}' 메뉴를 취소할 수 없습니다.\n"
+                f"(메뉴가 존재하지 않거나, 본인이 제안한 메뉴가 아니거나, 이미 투표가 시작되었습니다)",
+                ephemeral=True
+            )
+            return
 
-    # 메뉴 삭제
-    success = session.remove_menu(메뉴명, interaction.user.id)
-    if not success:
-        await interaction.followup.send(
-            f"❌ '{메뉴명}' 메뉴를 취소할 수 없습니다.\n"
-            f"(메뉴가 존재하지 않거나, 본인이 제안한 메뉴가 아니거나, 이미 투표가 시작되었습니다)",
-            ephemeral=True
-        )
-        return
+        # 즉시 사용자에게 응답
+        await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!", ephemeral=True)
+        logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
 
-    # 먼저 사용자에게 응답
-    await interaction.followup.send(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!", ephemeral=True)
-    logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
+        # 메인 메시지 업데이트 (백그라운드에서)
+        asyncio.create_task(update_voting_message(interaction.guild, session))
 
-    # 메인 메시지 업데이트 (백그라운드에서)
-    asyncio.create_task(update_voting_message(interaction.guild, session))
+    except discord.errors.NotFound as e:
+        logger.warning(f"⚠️ 메뉴제안취소 인터랙션 NotFound 에러: {e}")
+    except Exception as e:
+        logger.error(f"❌ 메뉴제안취소 중 에러 발생: {e}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
+        except:
+            pass
 
 
 # ==================== Bot Start ====================
