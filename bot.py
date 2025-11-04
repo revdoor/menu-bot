@@ -27,7 +27,9 @@ from menu_voting import (
     VotingManager,
     VotingSession,
     MenuProposalView,
-    create_proposal_embed
+    create_proposal_embed,
+    update_voting_message,
+    is_admin
 )
 from config import (
     PING_INTERVAL_SECONDS,
@@ -391,38 +393,6 @@ async def tts_stop(interaction: discord.Interaction) -> None:
 
 # ==================== Menu Voting Commands ====================
 
-async def update_voting_message(interaction: discord.Interaction, session: VotingSession) -> None:
-    """투표 메시지 업데이트 헬퍼 함수 (interaction 기반)"""
-    if not session.message_id:
-        logger.warning(f"메시지 업데이트 실패: message_id가 없음 (세션: {session.title})")
-        return
-
-    try:
-        # 투표 시작 전이면 제안 Embed, 시작 후면 투표 Embed
-        if session.voting_started:
-            from menu_voting import create_voting_embed
-            updated_embed = create_voting_embed(session)
-            logger.debug("투표 진행 중 Embed 생성")
-        else:
-            from menu_voting import create_proposal_embed
-            updated_embed = create_proposal_embed(session)
-            logger.debug(f"제안 단계 Embed 생성 (메뉴 수: {len(session.menus)})")
-            logger.debug(f"새 Embed 필드 수: {len(updated_embed.fields)}")
-            if updated_embed.fields:
-                logger.debug(f"첫 번째 필드 값: {updated_embed.fields[0].value[:100]}")
-
-        # followup.edit_message로 원본 투표 메시지 수정 (View 유지됨)
-        logger.debug(f"followup.edit_message() 호출 - message_id: {session.message_id}")
-        await interaction.followup.edit_message(session.message_id, embed=updated_embed)
-        logger.info(f"✅ 메시지 업데이트 완료: {session.title} (메뉴: {len(session.menus)}개)")
-    except discord.NotFound:
-        logger.error(f"메시지 업데이트 실패: 메시지를 찾을 수 없음 (message_id: {session.message_id})")
-    except discord.Forbidden:
-        logger.error(f"메시지 업데이트 실패: 권한 없음 (message_id: {session.message_id})")
-    except Exception as e:
-        logger.error(f"메시지 업데이트 실패: {e}", exc_info=True)
-
-
 @bot.tree.command(name='투표시작', description='메뉴 투표를 시작합니다')
 @app_commands.describe(제목='투표 제목 (예: 오늘 점심 메뉴)')
 async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
@@ -550,18 +520,21 @@ async def menu_proposal_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
-    """메뉴 제안 취소를 위한 자동완성 - 본인이 제안한 메뉴만 표시"""
+    """메뉴 제안 취소를 위한 자동완성 - 본인이 제안한 메뉴만 표시 (관리자는 모든 메뉴)"""
     guild_id = interaction.guild.id
     session = voting_manager.get_session(guild_id)
 
     if not session:
         return []
 
-    # 본인이 제안한 메뉴만 필터링
-    user_menus = [
-        menu_name for menu_name, proposer_id in session.menus.items()
-        if proposer_id == interaction.user.id
-    ]
+    # 관리자면 모든 메뉴, 아니면 본인이 제안한 메뉴만
+    if is_admin(interaction.user.name):
+        user_menus = list(session.menus.keys())
+    else:
+        user_menus = [
+            menu_name for menu_name, proposer_id in session.menus.items()
+            if proposer_id == interaction.user.id
+        ]
 
     # 현재 입력값과 매칭되는 메뉴 필터링
     if current:
@@ -574,7 +547,7 @@ async def menu_proposal_autocomplete(
     ]
 
 
-@bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다')
+@bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다 (관리자는 모든 메뉴 취소 가능)')
 @app_commands.describe(메뉴명='취소할 메뉴 이름')
 @app_commands.autocomplete(메뉴명=menu_proposal_autocomplete)
 async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str) -> None:
@@ -587,8 +560,11 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
             await interaction.response.send_message("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
             return
 
-        # 메뉴 삭제
-        success = session.remove_menu(메뉴명, interaction.user.id)
+        # 관리자 여부 확인
+        user_is_admin = is_admin(interaction.user.name)
+
+        # 메뉴 삭제 (관리자면 is_admin=True 전달)
+        success = session.remove_menu(메뉴명, interaction.user.id, is_admin=user_is_admin)
         if not success:
             await interaction.response.send_message(
                 f"❌ '{메뉴명}' 메뉴를 취소할 수 없습니다.\n"
@@ -598,8 +574,9 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
             return
 
         # 즉시 사용자에게 응답
-        await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!", ephemeral=True)
-        logger.info(f"메뉴 제안 취소: {메뉴명} (제안자: {interaction.user.name})")
+        admin_suffix = " [관리자 권한]" if user_is_admin else ""
+        await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!{admin_suffix}", ephemeral=True)
+        logger.info(f"메뉴 제안 취소: {메뉴명} (사용자: {interaction.user.name}, 관리자: {user_is_admin})")
 
         # 메인 메시지 업데이트 (interaction 사용)
         await update_voting_message(interaction, session)
@@ -617,10 +594,10 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
 
 @bot.tree.command(name='세션초기화', description='[관리자 전용] 투표 세션을 강제로 초기화합니다')
 async def reset_session(interaction: discord.Interaction) -> None:
-    """세션 강제 초기화 명령어 (revdoor 전용)"""
+    """세션 강제 초기화 명령어 (관리자 전용)"""
     try:
-        # revdoor만 사용 가능
-        if interaction.user.name != "revdoor":
+        # 관리자 권한 확인
+        if not is_admin(interaction.user.name):
             await interaction.response.send_message("❌ 이 명령어는 관리자만 사용할 수 있습니다!", ephemeral=True)
             return
 

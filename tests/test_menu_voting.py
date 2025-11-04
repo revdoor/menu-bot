@@ -1,11 +1,10 @@
-"""menu_voting.py 테스트"""
+"""menu_voting 패키지 테스트"""
 import pytest
 from datetime import datetime
 from unittest.mock import MagicMock, AsyncMock, patch
 
-from menu_voting import (
-    VotingSession,
-    VotingManager,
+from menu_voting.models import VotingSession, VotingManager
+from menu_voting.embeds import (
     create_proposal_embed,
     create_voting_embed,
     create_results_embed
