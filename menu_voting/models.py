@@ -173,7 +173,8 @@ class VotingSession:
         regular_menus = []
 
         for menu in self.menus:
-            if menu_min_scores[menu] == 0:
+            # 실제로 0점을 준 사람이 있는 경우만 제외 메뉴로 분류
+            if menu_zero_voters[menu]:
                 # 0점을 받은 메뉴
                 zero_score_menus.append((
                     menu,
@@ -181,7 +182,7 @@ class VotingSession:
                     menu_zero_voters[menu]
                 ))
             else:
-                # 일반 메뉴
+                # 일반 메뉴 (0점을 받지 않았거나 투표가 없는 경우)
                 regular_menus.append((
                     menu,
                     menu_scores[menu],

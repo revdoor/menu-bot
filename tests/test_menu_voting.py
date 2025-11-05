@@ -33,9 +33,12 @@ class TestVotingSession:
         assert session.creator_id == 111222333
         assert session.menus == {}
         assert session.votes == {}
+        assert session.voter_names == {}
         assert session.voting_started is False
         assert session.voting_closed is False
         assert session.message_id is None
+        assert session.is_restricted is False
+        assert session.allowed_voters == set()
         assert isinstance(session.created_at, datetime)
 
     def test_add_menu_success(self, session):
@@ -60,14 +63,28 @@ class TestVotingSession:
         assert "짜장면" not in session.menus
 
     def test_remove_menu_success(self, session):
-        """메뉴 삭제 성공"""
+        """메뉴 삭제 성공 (제안자)"""
         session.add_menu("짜장면", 111)
         result = session.remove_menu("짜장면", 111)
         assert result is True
         assert "짜장면" not in session.menus
 
-    def test_remove_menu_not_proposer(self, session):
-        """다른 사람이 제안한 메뉴 삭제 불가"""
+    def test_remove_menu_by_creator(self, session):
+        """메뉴 삭제 성공 (생성자)"""
+        session.add_menu("짜장면", 111)
+        result = session.remove_menu("짜장면", session.creator_id)
+        assert result is True
+        assert "짜장면" not in session.menus
+
+    def test_remove_menu_by_admin(self, session):
+        """메뉴 삭제 성공 (관리자)"""
+        session.add_menu("짜장면", 111)
+        result = session.remove_menu("짜장면", 999, is_admin=True)
+        assert result is True
+        assert "짜장면" not in session.menus
+
+    def test_remove_menu_not_authorized(self, session):
+        """권한 없는 사람이 메뉴 삭제 불가"""
         session.add_menu("짜장면", 111)
         result = session.remove_menu("짜장면", 222)
         assert result is False
@@ -92,14 +109,15 @@ class TestVotingSession:
         session.voting_started = True
 
         votes = {"짜장면": 5, "짬뽕": 3}
-        result = session.submit_vote(333, votes)
+        result = session.submit_vote(333, "테스트유저", votes)
         assert result is True
         assert session.votes[333] == votes
+        assert session.voter_names[333] == "테스트유저"
 
     def test_submit_vote_before_start(self, session):
         """투표 시작 전 투표 불가"""
         votes = {"짜장면": 5}
-        result = session.submit_vote(333, votes)
+        result = session.submit_vote(333, "테스트유저", votes)
         assert result is False
 
     def test_submit_vote_after_close(self, session):
@@ -107,7 +125,7 @@ class TestVotingSession:
         session.voting_started = True
         session.voting_closed = True
         votes = {"짜장면": 5}
-        result = session.submit_vote(333, votes)
+        result = session.submit_vote(333, "테스트유저", votes)
         assert result is False
 
     def test_submit_vote_overwrite(self, session):
@@ -116,12 +134,38 @@ class TestVotingSession:
         session.voting_started = True
 
         votes1 = {"짜장면": 3}
-        session.submit_vote(333, votes1)
+        session.submit_vote(333, "테스트유저", votes1)
 
         votes2 = {"짜장면": 5}
-        session.submit_vote(333, votes2)
+        session.submit_vote(333, "테스트유저수정", votes2)
 
         assert session.votes[333] == votes2
+        assert session.voter_names[333] == "테스트유저수정"
+
+    def test_restricted_voting(self):
+        """제한된 투표 기능"""
+        session = VotingSession(
+            title="제한 투표",
+            guild_id=123,
+            channel_id=456,
+            creator_id=789,
+            is_restricted=True
+        )
+
+        # 생성자는 항상 허용
+        assert session.is_voter_allowed(789) is True
+
+        # 일반 사용자는 허용되지 않음
+        assert session.is_voter_allowed(999) is False
+
+        # 사용자 추가
+        session.add_allowed_voter(999)
+        assert session.is_voter_allowed(999) is True
+
+    def test_add_allowed_voter_non_restricted(self, session):
+        """제한 모드가 아니면 허용 목록 추가 불가"""
+        result = session.add_allowed_voter(999)
+        assert result is False
 
 
 @pytest.mark.unit
@@ -143,37 +187,38 @@ class TestVotingResultCalculation:
         session.voting_started = True
 
         # 투표 데이터
-        session.submit_vote(10, {"짜장면": 5, "짬뽕": 4, "탕수육": 3})
-        session.submit_vote(20, {"짜장면": 4, "짬뽕": 5, "탕수육": 2})
-        session.submit_vote(30, {"짜장면": 3, "짬뽕": 4, "탕수육": 5})
+        session.submit_vote(10, "유저1", {"짜장면": 5, "짬뽕": 4, "탕수육": 3})
+        session.submit_vote(20, "유저2", {"짜장면": 4, "짬뽕": 5, "탕수육": 2})
+        session.submit_vote(30, "유저3", {"짜장면": 3, "짬뽕": 4, "탕수육": 5})
 
         return session
 
     def test_calculate_results_total_score(self, session_with_votes):
         """총점 계산 확인"""
-        results = session_with_votes.calculate_results()
+        regular_results, zero_results = session_with_votes.calculate_results()
 
         # 결과는 (메뉴명, 총점, 최소점) 튜플의 리스트
-        menu_scores = {menu: total for menu, total, _ in results}
+        menu_scores = {menu: total for menu, total, _ in regular_results}
 
         assert menu_scores["짜장면"] == 12  # 5+4+3
         assert menu_scores["짬뽕"] == 13    # 4+5+4
         assert menu_scores["탕수육"] == 10  # 3+2+5
+        assert len(zero_results) == 0
 
     def test_calculate_results_sorting(self, session_with_votes):
         """결과 정렬 확인 (총점 내림차순)"""
-        results = session_with_votes.calculate_results()
+        regular_results, _ = session_with_votes.calculate_results()
 
         # 첫 번째는 짬뽕(13점)이어야 함
-        assert results[0][0] == "짬뽕"
-        assert results[0][1] == 13
+        assert regular_results[0][0] == "짬뽕"
+        assert regular_results[0][1] == 13
 
     def test_calculate_results_min_score(self, session_with_votes):
         """최소점 계산 확인"""
-        results = session_with_votes.calculate_results()
+        regular_results, _ = session_with_votes.calculate_results()
 
         # 짜장면의 최소점은 3점
-        jjajang_result = next(r for r in results if r[0] == "짜장면")
+        jjajang_result = next(r for r in regular_results if r[0] == "짜장면")
         assert jjajang_result[2] == 3
 
     def test_calculate_results_tie_breaker(self):
@@ -189,15 +234,15 @@ class TestVotingResultCalculation:
         session.voting_started = True
 
         # 총점은 같지만 최소점이 다름
-        session.submit_vote(10, {"메뉴A": 5, "메뉴B": 5})
-        session.submit_vote(20, {"메뉴A": 5, "메뉴B": 4})
+        session.submit_vote(10, "유저1", {"메뉴A": 5, "메뉴B": 5})
+        session.submit_vote(20, "유저2", {"메뉴A": 5, "메뉴B": 4})
         # 메뉴A: 총 10점, 최소 5점
         # 메뉴B: 총 9점, 최소 4점
 
-        results = session.calculate_results()
+        regular_results, _ = session.calculate_results()
 
         # 메뉴A가 1위여야 함
-        assert results[0][0] == "메뉴A"
+        assert regular_results[0][0] == "메뉴A"
 
     def test_calculate_results_no_votes(self):
         """투표가 없는 경우"""
@@ -210,15 +255,47 @@ class TestVotingResultCalculation:
         session.add_menu("짜장면", 1)
         session.voting_started = True
 
-        results = session.calculate_results()
+        regular_results, zero_results = session.calculate_results()
 
-        assert len(results) == 1
-        assert results[0] == ("짜장면", 0, 0)
+        assert len(regular_results) == 1
+        assert regular_results[0] == ("짜장면", 0, 0)
+        assert len(zero_results) == 0
 
-    def test_calculate_results_partial_votes(self):
-        """일부 사용자만 투표한 경우"""
+    def test_calculate_results_with_zero_scores(self):
+        """0점을 받은 메뉴 처리"""
         session = VotingSession(
-            title="부분 투표",
+            title="0점 테스트",
+            guild_id=123,
+            channel_id=456,
+            creator_id=789
+        )
+        session.add_menu("메뉴A", 1)
+        session.add_menu("메뉴B", 2)
+        session.add_menu("메뉴C", 3)
+        session.voting_started = True
+
+        # 메뉴B와 메뉴C는 0점을 받음
+        session.submit_vote(10, "유저1", {"메뉴A": 5, "메뉴B": 0, "메뉴C": 3})
+        session.submit_vote(20, "유저2", {"메뉴A": 4, "메뉴B": 2, "메뉴C": 0})
+
+        regular_results, zero_results = session.calculate_results()
+
+        # 메뉴A만 정규 결과에 포함
+        assert len(regular_results) == 1
+        assert regular_results[0][0] == "메뉴A"
+
+        # 메뉴B와 메뉴C는 0점 결과에 포함
+        assert len(zero_results) == 2
+        zero_menus = {menu: (total, voters) for menu, total, voters in zero_results}
+        assert "메뉴B" in zero_menus
+        assert "메뉴C" in zero_menus
+        assert "유저1" in zero_menus["메뉴B"][1]
+        assert "유저2" in zero_menus["메뉴C"][1]
+
+    def test_calculate_results_all_zero_scores(self):
+        """모든 메뉴가 0점을 받은 경우"""
+        session = VotingSession(
+            title="전체 0점",
             guild_id=123,
             channel_id=456,
             creator_id=789
@@ -227,14 +304,14 @@ class TestVotingResultCalculation:
         session.add_menu("메뉴B", 2)
         session.voting_started = True
 
-        # 사용자 10은 메뉴A에만 투표
-        session.submit_vote(10, {"메뉴A": 5, "메뉴B": 3})
-        session.submit_vote(20, {"메뉴A": 4, "메뉴B": 5})
+        session.submit_vote(10, "유저1", {"메뉴A": 0, "메뉴B": 1})
+        session.submit_vote(20, "유저2", {"메뉴A": 2, "메뉴B": 0})
 
-        results = session.calculate_results()
+        regular_results, zero_results = session.calculate_results()
 
-        # 모든 메뉴가 결과에 포함되어야 함
-        assert len(results) == 2
+        # 모든 메뉴가 0점 결과에 포함
+        assert len(regular_results) == 0
+        assert len(zero_results) == 2
 
 
 @pytest.mark.unit
@@ -261,6 +338,18 @@ class TestVotingManager:
         assert session is not None
         assert session.title == "점심 메뉴"
         assert manager.get_session(123) == session
+
+    def test_create_session_with_restriction(self, manager):
+        """제한된 투표 세션 생성"""
+        session = manager.create_session(
+            guild_id=123,
+            channel_id=456,
+            creator_id=789,
+            title="제한 투표",
+            is_restricted=True
+        )
+        assert session is not None
+        assert session.is_restricted is True
 
     def test_create_session_duplicate(self, manager):
         """중복 세션 생성 실패"""
@@ -326,8 +415,8 @@ class TestEmbedCreation:
         session.add_menu("짜장면", 1)
         session.add_menu("짬뽕", 2)
         session.voting_started = True
-        session.submit_vote(10, {"짜장면": 5, "짬뽕": 4})
-        session.submit_vote(20, {"짜장면": 4, "짬뽕": 5})
+        session.submit_vote(10, "유저1", {"짜장면": 5, "짬뽕": 4})
+        session.submit_vote(20, "유저2", {"짜장면": 4, "짬뽕": 5})
         return session
 
     def test_create_proposal_embed_empty(self):
@@ -350,6 +439,13 @@ class TestEmbedCreation:
         menu_field = next((f for f in field_values if "짜장면" in f or "짬뽕" in f), None)
         assert menu_field is not None
 
+    def test_create_proposal_embed_restricted(self):
+        """제한된 투표 Embed"""
+        session = VotingSession("제한 투표", 123, 456, 789, is_restricted=True)
+        embed = create_proposal_embed(session)
+
+        assert "🔒" in embed.title
+
     def test_create_voting_embed(self, session_voting):
         """투표 진행 단계 Embed"""
         embed = create_voting_embed(session_voting)
@@ -357,14 +453,15 @@ class TestEmbedCreation:
         assert "점심 메뉴 투표" in embed.title
         assert embed.description is not None
 
-        # 투표 현황이 포함되어야 함
+        # 투표 현황이 포함되어야 함 (이름 표시)
         field_values = [field.value for field in embed.fields]
         assert any("2명" in str(v) for v in field_values)
+        assert any("유저1" in str(v) or "유저2" in str(v) for v in field_values)
 
     def test_create_results_embed(self, session_voting):
         """결과 Embed"""
-        results = session_voting.calculate_results()
-        embed = create_results_embed(session_voting, results)
+        regular_results, zero_results = session_voting.calculate_results()
+        embed = create_results_embed(session_voting, regular_results, zero_results)
 
         assert "결과" in embed.title
         assert "2명" in embed.description
@@ -380,8 +477,8 @@ class TestEmbedCreation:
         session.add_menu("짜장면", 1)
         session.voting_started = True
 
-        results = session.calculate_results()
-        embed = create_results_embed(session, results)
+        regular_results, zero_results = session.calculate_results()
+        embed = create_results_embed(session, regular_results, zero_results)
 
         assert embed is not None
         assert "0명" in embed.description
@@ -394,14 +491,48 @@ class TestEmbedCreation:
         session.voting_started = True
 
         # 동점
-        session.submit_vote(10, {"메뉴A": 5, "메뉴B": 5})
-        session.submit_vote(20, {"메뉴A": 5, "메뉴B": 5})
+        session.submit_vote(10, "유저1", {"메뉴A": 5, "메뉴B": 5})
+        session.submit_vote(20, "유저2", {"메뉴A": 5, "메뉴B": 5})
 
-        results = session.calculate_results()
-        embed = create_results_embed(session, results)
+        regular_results, zero_results = session.calculate_results()
+        embed = create_results_embed(session, regular_results, zero_results)
 
         # 동점 표시가 있어야 함
         assert any("동점" in str(field.value) or "메뉴A" in str(field.value) for field in embed.fields)
+
+    def test_create_results_embed_with_zero_scores(self):
+        """0점 메뉴가 있는 결과 Embed"""
+        session = VotingSession("0점 테스트", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.add_menu("메뉴B", 2)
+        session.voting_started = True
+
+        session.submit_vote(10, "유저1", {"메뉴A": 5, "메뉴B": 0})
+        session.submit_vote(20, "유저2", {"메뉴A": 4, "메뉴B": 2})
+
+        regular_results, zero_results = session.calculate_results()
+        embed = create_results_embed(session, regular_results, zero_results)
+
+        # 제외된 메뉴 섹션이 있어야 함
+        field_names = [field.name for field in embed.fields]
+        assert any("제외된 메뉴" in name for name in field_names)
+
+    def test_create_results_embed_all_zero_scores(self):
+        """모든 메뉴가 0점인 경우 결과 Embed"""
+        session = VotingSession("전체 0점", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.add_menu("메뉴B", 2)
+        session.voting_started = True
+
+        session.submit_vote(10, "유저1", {"메뉴A": 0, "메뉴B": 1})
+        session.submit_vote(20, "유저2", {"메뉴A": 2, "메뉴B": 0})
+
+        regular_results, zero_results = session.calculate_results()
+        embed = create_results_embed(session, regular_results, zero_results)
+
+        # 경고 메시지가 있어야 함
+        field_values = [field.value for field in embed.fields]
+        assert any("모든 메뉴가 0점" in str(v) for v in field_values)
 
 
 @pytest.mark.integration
@@ -426,16 +557,17 @@ class TestVotingWorkflow:
         session.voting_started = True
 
         # 4. 투표 진행
-        session.submit_vote(10, {"짜장면": 5, "짬뽕": 4, "탕수육": 3})
-        session.submit_vote(20, {"짜장면": 4, "짬뽕": 5, "탕수육": 2})
-        session.submit_vote(30, {"짜장면": 5, "짬뽕": 3, "탕수육": 4})
+        session.submit_vote(10, "유저1", {"짜장면": 5, "짬뽕": 4, "탕수육": 3})
+        session.submit_vote(20, "유저2", {"짜장면": 4, "짬뽕": 5, "탕수육": 2})
+        session.submit_vote(30, "유저3", {"짜장면": 5, "짬뽕": 3, "탕수육": 4})
         assert len(session.votes) == 3
 
         # 5. 결과 계산
-        results = session.calculate_results()
-        assert len(results) == 3
+        regular_results, zero_results = session.calculate_results()
+        assert len(regular_results) == 3
+        assert len(zero_results) == 0
 
-        winner = results[0]
+        winner = regular_results[0]
         assert winner[0] == "짜장면"  # 총 14점으로 1위
         assert winner[1] == 14
 
@@ -452,14 +584,14 @@ class TestVotingWorkflow:
         session.voting_started = True
 
         # 첫 번째 투표
-        session.submit_vote(10, {"메뉴A": 3, "메뉴B": 4})
-        results1 = session.calculate_results()
-        assert results1[0][0] == "메뉴B"
+        session.submit_vote(10, "유저1", {"메뉴A": 3, "메뉴B": 4})
+        regular_results1, _ = session.calculate_results()
+        assert regular_results1[0][0] == "메뉴B"
 
         # 투표 수정
-        session.submit_vote(10, {"메뉴A": 5, "메뉴B": 2})
-        results2 = session.calculate_results()
-        assert results2[0][0] == "메뉴A"
+        session.submit_vote(10, "유저1", {"메뉴A": 5, "메뉴B": 2})
+        regular_results2, _ = session.calculate_results()
+        assert regular_results2[0][0] == "메뉴A"
 
     def test_menu_proposal_cancellation(self):
         """메뉴 제안 취소 시나리오"""
@@ -475,6 +607,33 @@ class TestVotingWorkflow:
         assert len(session.menus) == 1
         assert "짬뽕" in session.menus
         assert "짜장면" not in session.menus
+
+    def test_restricted_voting_workflow(self):
+        """제한된 투표 워크플로우"""
+        manager = VotingManager()
+
+        # 1. 제한된 투표 시작
+        session = manager.create_session(123, 456, 789, "제한 투표", is_restricted=True)
+        assert session.is_restricted is True
+
+        # 2. 메뉴 제안
+        session.add_menu("메뉴A", 1)
+        session.add_menu("메뉴B", 2)
+        session.voting_started = True
+
+        # 3. 생성자는 항상 투표 가능
+        assert session.is_voter_allowed(789) is True
+        session.submit_vote(789, "생성자", {"메뉴A": 5, "메뉴B": 4})
+
+        # 4. 허용되지 않은 사용자는 투표 불가
+        assert session.is_voter_allowed(999) is False
+
+        # 5. 사용자 허용 후 투표 가능
+        session.add_allowed_voter(999)
+        assert session.is_voter_allowed(999) is True
+        session.submit_vote(999, "허용유저", {"메뉴A": 4, "메뉴B": 5})
+
+        assert len(session.votes) == 2
 
 
 @pytest.mark.unit
@@ -504,183 +663,127 @@ class TestMessageUpdates:
         assert session.message_id == 111222333
 
         # 투표 제출
-        session.submit_vote(10, {"짜장면": 5})
+        session.submit_vote(10, "유저1", {"짜장면": 5})
         assert session.message_id == 111222333
 
 
 @pytest.mark.unit
-class TestAutocomplete:
-    """자동완성 기능 테스트 (로직 검증)"""
+class TestRankingTieBreaking:
+    """동점 처리 및 순위 테스트"""
 
-    def test_get_user_menus(self):
-        """사용자가 제안한 메뉴만 필터링"""
-        session = VotingSession("테스트", 123, 456, 789)
-        session.add_menu("짜장면", 10)
-        session.add_menu("짬뽕", 20)
-        session.add_menu("탕수육", 10)
-        session.add_menu("볶음밥", 30)
-
-        # 사용자 10이 제안한 메뉴
-        user_10_menus = [
-            menu for menu, proposer_id in session.menus.items()
-            if proposer_id == 10
-        ]
-
-        assert len(user_10_menus) == 2
-        assert "짜장면" in user_10_menus
-        assert "탕수육" in user_10_menus
-        assert "짬뽕" not in user_10_menus
-        assert "볶음밥" not in user_10_menus
-
-    def test_autocomplete_filtering(self):
-        """자동완성 필터링 로직"""
-        session = VotingSession("테스트", 123, 456, 789)
-        session.add_menu("짜장면", 10)
-        session.add_menu("짬뽕", 10)
-        session.add_menu("탕수육", 10)
-
-        user_menus = [
-            menu for menu in session.menus.keys()
-            if session.menus[menu] == 10
-        ]
-
-        # "짜" 검색
-        filtered = [m for m in user_menus if "짜" in m.lower()]
-        assert len(filtered) == 1  # 짜장면
-
-        # "탕" 검색
-        filtered = [m for m in user_menus if "탕" in m.lower()]
-        assert len(filtered) == 1  # 탕수육
-
-
-@pytest.mark.integration
-class TestRealtimeUpdates:
-    """실시간 업데이트 통합 테스트"""
-
-    def test_menu_proposal_flow_with_message_id(self):
-        """메뉴 제안 흐름에서 메시지 ID 사용"""
-        manager = VotingManager()
-        session = manager.create_session(123, 456, 789, "점심 메뉴")
-
-        # 메시지 ID 설정 (봇이 메시지 전송 후)
-        session.message_id = 999888777
-
-        # 메뉴 제안들
-        session.add_menu("짜장면", 10)
-        session.add_menu("짬뽕", 20)
-
-        # 메시지 ID는 여전히 유지
-        assert session.message_id == 999888777
-
-        # 메뉴 취소
-        session.remove_menu("짜장면", 10)
-        assert session.message_id == 999888777
-
-    def test_voting_flow_with_updates(self):
-        """투표 흐름에서 실시간 업데이트"""
-        manager = VotingManager()
-        session = manager.create_session(123, 456, 789, "저녁 메뉴")
-        session.message_id = 111222333
-
-        # 메뉴 제안
-        session.add_menu("피자", 1)
-        session.add_menu("치킨", 2)
-
-        # 투표 시작
-        session.voting_started = True
-        assert len(session.votes) == 0
-
-        # 투표 1
-        session.submit_vote(10, {"피자": 5, "치킨": 4})
-        assert len(session.votes) == 1
-
-        # 투표 2
-        session.submit_vote(20, {"피자": 3, "치킨": 5})
-        assert len(session.votes) == 2
-
-        # 메시지 ID는 변경되지 않음
-        assert session.message_id == 111222333
-
-    def test_vote_count_updates(self):
-        """투표 현황 카운트 업데이트"""
-        session = VotingSession("테스트", 123, 456, 789)
+    def test_same_rank_for_exact_tie(self):
+        """총점과 최소점이 모두 같으면 같은 순위"""
+        session = VotingSession("동점 테스트", 123, 456, 789)
         session.add_menu("메뉴A", 1)
         session.add_menu("메뉴B", 2)
+        session.add_menu("메뉴C", 3)
         session.voting_started = True
 
-        # 초기 상태
-        assert len(session.votes) == 0
+        # 메뉴A와 메뉴B는 완전 동점
+        session.submit_vote(10, "유저1", {"메뉴A": 5, "메뉴B": 5, "메뉴C": 3})
+        session.submit_vote(20, "유저2", {"메뉴A": 4, "메뉴B": 4, "메뉴C": 2})
 
-        # 투표 1
-        session.submit_vote(10, {"메뉴A": 5, "메뉴B": 4})
-        assert len(session.votes) == 1
+        regular_results, _ = session.calculate_results()
 
-        # 투표 2
-        session.submit_vote(20, {"메뉴A": 4, "메뉴B": 5})
-        assert len(session.votes) == 2
+        # 메뉴A와 메뉴B는 모두 총점 9점, 최소점 4점
+        assert regular_results[0][1] == 9
+        assert regular_results[0][2] == 4
+        assert regular_results[1][1] == 9
+        assert regular_results[1][2] == 4
 
-        # 투표 3
-        session.submit_vote(30, {"메뉴A": 3, "메뉴B": 3})
-        assert len(session.votes) == 3
-
-        # 투표 수정
-        session.submit_vote(10, {"메뉴A": 1, "메뉴B": 1})
-        assert len(session.votes) == 3  # 개수는 그대로
-
-    def test_concurrent_menu_proposals(self):
-        """동시 메뉴 제안 처리"""
-        session = VotingSession("테스트", 123, 456, 789)
-        session.message_id = 999
-
-        # 여러 사용자가 동시에 메뉴 제안
-        users = [10, 20, 30, 40, 50]
-        menus = ["짜장면", "짬뽕", "탕수육", "볶음밥", "팔보채"]
-
-        for user_id, menu in zip(users, menus):
-            result = session.add_menu(menu, user_id)
-            assert result is True
-
-        assert len(session.menus) == 5
-        assert session.message_id == 999  # 메시지 ID 유지
-
-
-@pytest.mark.unit
-class TestVotingViewHelpers:
-    """투표 뷰 헬퍼 메서드 테스트"""
-
-    def test_user_specific_menu_filter(self):
-        """특정 사용자의 메뉴만 필터링"""
-        session = VotingSession("테스트", 123, 456, 789)
-        session.add_menu("메뉴1", 100)
-        session.add_menu("메뉴2", 100)
-        session.add_menu("메뉴3", 200)
-        session.add_menu("메뉴4", 100)
-
-        # 사용자 100의 메뉴만
-        user_100_menus = {
-            menu: proposer
-            for menu, proposer in session.menus.items()
-            if proposer == 100
-        }
-
-        assert len(user_100_menus) == 3
-        assert "메뉴3" not in user_100_menus
-
-    def test_remaining_menus_calculation(self):
-        """아직 투표하지 않은 메뉴 계산"""
-        session = VotingSession("테스트", 123, 456, 789)
+    def test_rank_skipping_after_tie(self):
+        """동점 후 다음 순위는 건너뛰어야 함"""
+        session = VotingSession("순위 건너뛰기", 123, 456, 789)
         session.add_menu("A", 1)
         session.add_menu("B", 2)
         session.add_menu("C", 3)
+        session.add_menu("D", 4)
         session.voting_started = True
 
-        # 사용자의 현재 투표 상태
-        current_votes = {"A": 5}
+        # A, B, C는 1위 동점, D는 4위
+        session.submit_vote(10, "유저1", {"A": 5, "B": 5, "C": 5, "D": 1})
+        session.submit_vote(20, "유저2", {"A": 5, "B": 5, "C": 5, "D": 1})
 
-        # 남은 메뉴
-        remaining = [m for m in session.menus.keys() if m not in current_votes]
+        regular_results, _ = session.calculate_results()
 
-        assert len(remaining) == 2
-        assert "B" in remaining
-        assert "C" in remaining
-        assert "A" not in remaining
+        # 처음 3개는 모두 10점
+        assert regular_results[0][1] == 10
+        assert regular_results[1][1] == 10
+        assert regular_results[2][1] == 10
+        # 마지막은 2점
+        assert regular_results[3][1] == 2
+
+
+@pytest.mark.unit
+class TestZeroScoreFeature:
+    """0점 기능 테스트"""
+
+    def test_zero_score_separates_menu(self):
+        """0점을 받은 메뉴는 별도로 분리됨"""
+        session = VotingSession("0점 테스트", 123, 456, 789)
+        session.add_menu("좋은메뉴", 1)
+        session.add_menu("나쁜메뉴", 2)
+        session.voting_started = True
+
+        session.submit_vote(10, "유저1", {"좋은메뉴": 5, "나쁜메뉴": 0})
+        session.submit_vote(20, "유저2", {"좋은메뉴": 4, "나쁜메뉴": 3})
+
+        regular_results, zero_results = session.calculate_results()
+
+        # 좋은메뉴만 정규 결과에
+        assert len(regular_results) == 1
+        assert regular_results[0][0] == "좋은메뉴"
+
+        # 나쁜메뉴는 0점 결과에
+        assert len(zero_results) == 1
+        assert zero_results[0][0] == "나쁜메뉴"
+        assert "유저1" in zero_results[0][2]
+
+    def test_zero_voters_tracking(self):
+        """0점을 준 사람 추적"""
+        session = VotingSession("추적 테스트", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.voting_started = True
+
+        session.submit_vote(10, "Alice", {"메뉴A": 0})
+        session.submit_vote(20, "Bob", {"메뉴A": 0})
+        session.submit_vote(30, "Charlie", {"메뉴A": 5})
+
+        _, zero_results = session.calculate_results()
+
+        assert len(zero_results) == 1
+        menu, total, zero_voters = zero_results[0]
+        assert menu == "메뉴A"
+        assert total == 5  # 0 + 0 + 5
+        assert "Alice" in zero_voters
+        assert "Bob" in zero_voters
+        assert "Charlie" not in zero_voters
+
+
+@pytest.mark.unit
+class TestVoterNameTracking:
+    """투표자 이름 추적 테스트"""
+
+    def test_voter_names_stored(self):
+        """투표자 이름이 저장됨"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.voting_started = True
+
+        session.submit_vote(10, "홍길동", {"메뉴A": 5})
+        session.submit_vote(20, "김철수", {"메뉴A": 4})
+
+        assert session.voter_names[10] == "홍길동"
+        assert session.voter_names[20] == "김철수"
+
+    def test_voter_name_update_on_revote(self):
+        """재투표 시 이름 업데이트"""
+        session = VotingSession("테스트", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.voting_started = True
+
+        session.submit_vote(10, "원래이름", {"메뉴A": 5})
+        assert session.voter_names[10] == "원래이름"
+
+        session.submit_vote(10, "바뀐이름", {"메뉴A": 3})
+        assert session.voter_names[10] == "바뀐이름"
