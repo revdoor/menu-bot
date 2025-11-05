@@ -60,6 +60,35 @@ async def _handle_orphaned_message(interaction: discord.Interaction) -> None:
         pass
 
 
+def _log_voting_results(
+    title: str,
+    regular_results: list[tuple[str, int, int]],
+    zero_results: list[tuple[str, int, list[str]]],
+    voter_count: int
+) -> None:
+    """
+    투표 결과 로깅
+
+    Args:
+        title: 투표 제목
+        regular_results: 일반 메뉴 결과
+        zero_results: 0점 메뉴 결과
+        voter_count: 투표 참여자 수
+    """
+    logger.info(f"투표 종료: {title} (참여자 {voter_count}명)")
+
+    if regular_results:
+        logger.info("=== 투표 결과 ===")
+        for idx, (menu, total, min_score) in enumerate(regular_results, 1):
+            logger.info(f"{idx}위. {menu} - 총점: {total}점, 최소점: {min_score}점")
+
+    if zero_results:
+        logger.info("=== 제외된 메뉴 (0점 포함) ===")
+        for menu, total, zero_voters in zero_results:
+            voters_str = ", ".join(zero_voters) if zero_voters else "없음"
+            logger.info(f"{menu} - 총점: {total}점, 0점 준 사람: {voters_str}")
+
+
 class MenuProposalView(View):
     """메뉴 제안 단계의 뷰"""
 
@@ -205,7 +234,7 @@ class VotingView(View):
                 self.session,
                 self.manager,
                 interaction.user.id,
-                interaction.user.name,
+                interaction.user.display_name,
                 existing_votes
             )
 
@@ -229,7 +258,7 @@ class VotingView(View):
             self.session,
             self.manager,
             interaction.user.id,
-            interaction.user.name,
+            interaction.user.display_name,
             menu_list,
             current_index=0,
             votes={}
@@ -310,6 +339,9 @@ class VotingView(View):
         else:
             await interaction.followup.send(embed=results_embed)
 
+        # 결과 로깅
+        _log_voting_results(self.session.title, regular_results, zero_results, len(self.session.votes))
+
         # 세션 정리
         self.manager.close_session(self.session.guild_id)
 
@@ -381,7 +413,10 @@ class SequentialVotingView(View):
                     content=f"✅ **투표가 완료되었습니다!**\n\n{vote_text}",
                     view=None
                 )
-                logger.info(f"투표 제출: user_id={self.user_id}, username={self.username} - {len(self.votes)}개 메뉴")
+
+                # 투표 결과 로깅
+                vote_details = ", ".join([f"{menu}:{score}점" for menu, score in self.votes.items()])
+                logger.info(f"투표 제출: {self.username} (user_id={self.user_id}) - {vote_details}")
 
                 # 메인 투표 메시지 업데이트
                 await self._update_main_message(interaction)
@@ -560,7 +595,11 @@ class VotingFormView(View):
                 content=f"{success_message}\n\n{vote_text}",
                 view=None
             )
-            logger.info(f"투표 {'수정' if self.is_edit_mode else '제출'}: user_id={self.user_id}, username={self.username} - {len(self.user_votes)}개 메뉴")
+
+            # 투표 결과 로깅
+            vote_details = ", ".join([f"{menu}:{score}점" for menu, score in self.user_votes.items()])
+            action = "수정" if self.is_edit_mode else "제출"
+            logger.info(f"투표 {action}: {self.username} (user_id={self.user_id}) - {vote_details}")
 
             # 메인 투표 메시지 업데이트
             await self._update_main_message(interaction)
