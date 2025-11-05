@@ -394,8 +394,11 @@ async def tts_stop(interaction: discord.Interaction) -> None:
 # ==================== Menu Voting Commands ====================
 
 @bot.tree.command(name='투표시작', description='메뉴 투표를 시작합니다')
-@app_commands.describe(제목='투표 제목 (예: 오늘 점심 메뉴)')
-async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
+@app_commands.describe(
+    제목='투표 제목 (예: 오늘 점심 메뉴)',
+    투표제한='투표 제한 여부 (True: 허용된 사람만 투표 가능)'
+)
+async def vote_start(interaction: discord.Interaction, 제목: str, 투표제한: bool = False) -> None:
     """투표 시작 명령어"""
     try:
         guild_id = interaction.guild.id
@@ -414,7 +417,7 @@ async def vote_start(interaction: discord.Interaction, 제목: str) -> None:
             return
 
         # 새 투표 세션 생성
-        session = voting_manager.create_session(guild_id, channel_id, creator_id, 제목)
+        session = voting_manager.create_session(guild_id, channel_id, creator_id, 제목, is_restricted=투표제한)
         if not session:
             await interaction.response.send_message("❌ 투표 세션 생성에 실패했습니다.", ephemeral=True)
             return
@@ -520,15 +523,16 @@ async def menu_proposal_autocomplete(
     interaction: discord.Interaction,
     current: str
 ) -> list[app_commands.Choice[str]]:
-    """메뉴 제안 취소를 위한 자동완성 - 본인이 제안한 메뉴만 표시 (관리자는 모든 메뉴)"""
+    """메뉴 제안 취소를 위한 자동완성 - 본인이 제안한 메뉴만 표시 (관리자와 생성자는 모든 메뉴)"""
     guild_id = interaction.guild.id
     session = voting_manager.get_session(guild_id)
 
     if not session:
         return []
 
-    # 관리자면 모든 메뉴, 아니면 본인이 제안한 메뉴만
-    if is_admin(interaction.user.name):
+    # 관리자 또는 생성자면 모든 메뉴, 아니면 본인이 제안한 메뉴만
+    is_creator = interaction.user.id == session.creator_id
+    if is_admin(interaction.user.name) or is_creator:
         user_menus = list(session.menus.keys())
     else:
         user_menus = [
@@ -547,7 +551,7 @@ async def menu_proposal_autocomplete(
     ]
 
 
-@bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다 (관리자는 모든 메뉴 취소 가능)')
+@bot.tree.command(name='메뉴제안취소', description='자신이 제안한 메뉴를 취소합니다 (생성자/관리자는 모든 메뉴 취소 가능)')
 @app_commands.describe(메뉴명='취소할 메뉴 이름')
 @app_commands.autocomplete(메뉴명=menu_proposal_autocomplete)
 async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str) -> None:
@@ -562,6 +566,7 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
 
         # 관리자 여부 확인
         user_is_admin = is_admin(interaction.user.name)
+        is_creator = interaction.user.id == session.creator_id
 
         # 메뉴 삭제 (관리자면 is_admin=True 전달)
         success = session.remove_menu(메뉴명, interaction.user.id, is_admin=user_is_admin)
@@ -574,9 +579,14 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
             return
 
         # 즉시 사용자에게 응답
-        admin_suffix = " [관리자 권한]" if user_is_admin else ""
-        await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!{admin_suffix}", ephemeral=True)
-        logger.info(f"메뉴 제안 취소: {메뉴명} (사용자: {interaction.user.name}, 관리자: {user_is_admin})")
+        suffix = ""
+        if user_is_admin:
+            suffix = " [관리자 권한]"
+        elif is_creator:
+            suffix = " [생성자 권한]"
+
+        await interaction.response.send_message(f"✅ '{메뉴명}' 메뉴 제안이 취소되었습니다!{suffix}", ephemeral=True)
+        logger.info(f"메뉴 제안 취소: {메뉴명} (사용자: {interaction.user.name}, 관리자: {user_is_admin}, 생성자: {is_creator})")
 
         # 메인 메시지 업데이트 (interaction 사용)
         await update_voting_message(interaction, session)
@@ -585,6 +595,60 @@ async def cancel_menu_proposal(interaction: discord.Interaction, 메뉴명: str)
         logger.warning(f"⚠️ 메뉴제안취소 인터랙션 NotFound 에러: {e}")
     except Exception as e:
         logger.error(f"❌ 메뉴제안취소 중 에러 발생: {e}", exc_info=True)
+        try:
+            if not interaction.response.is_done():
+                await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
+        except:
+            pass
+
+
+@bot.tree.command(name='투표허용', description='제한된 투표에서 사용자를 허용합니다')
+@app_commands.describe(사용자='허용할 사용자 (멘션)')
+async def allow_voter(interaction: discord.Interaction, 사용자: discord.User) -> None:
+    """투표 허용 명령어"""
+    try:
+        guild_id = interaction.guild.id
+        session = voting_manager.get_session(guild_id)
+
+        if not session:
+            await interaction.response.send_message("❌ 진행 중인 투표가 없습니다!", ephemeral=True)
+            return
+
+        # 투표 생성자만 허용 가능
+        if interaction.user.id != session.creator_id:
+            await interaction.response.send_message(
+                "❌ 투표를 시작한 사람만 다른 사용자를 허용할 수 있습니다!",
+                ephemeral=True
+            )
+            return
+
+        # 제한 모드가 아니면 허용 불필요
+        if not session.is_restricted:
+            await interaction.response.send_message(
+                "❌ 이 투표는 제한 모드가 아닙니다. 모든 사용자가 투표할 수 있습니다.",
+                ephemeral=True
+            )
+            return
+
+        # 이미 허용된 사용자인지 확인
+        if session.is_voter_allowed(사용자.id):
+            await interaction.response.send_message(
+                f"ℹ️ {사용자.mention}님은 이미 투표 가능합니다.",
+                ephemeral=True
+            )
+            return
+
+        # 허용 목록에 추가
+        session.add_allowed_voter(사용자.id)
+
+        await interaction.response.send_message(
+            f"✅ {사용자.mention}님이 투표 허용 목록에 추가되었습니다!",
+            ephemeral=True
+        )
+        logger.info(f"투표 허용: {사용자.name} (session: {session.title}, by: {interaction.user.name})")
+
+    except Exception as e:
+        logger.error(f"❌ 투표허용 중 에러 발생: {e}", exc_info=True)
         try:
             if not interaction.response.is_done():
                 await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)

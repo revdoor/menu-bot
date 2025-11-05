@@ -190,6 +190,14 @@ class VotingView(View):
             )
             return
 
+        # 투표 권한 확인
+        if not self.session.is_voter_allowed(interaction.user.id):
+            await interaction.response.send_message(
+                "❌ 이 투표는 제한된 투표입니다. 투표 생성자에게 허용을 요청하세요!",
+                ephemeral=True
+            )
+            return
+
         # 기존 투표 내역이 있는 경우 (수정 모드)
         if interaction.user.id in self.session.votes:
             existing_votes = self.session.votes[interaction.user.id]
@@ -197,6 +205,7 @@ class VotingView(View):
                 self.session,
                 self.manager,
                 interaction.user.id,
+                interaction.user.name,
                 existing_votes
             )
 
@@ -220,6 +229,7 @@ class VotingView(View):
             self.session,
             self.manager,
             interaction.user.id,
+            interaction.user.name,
             menu_list,
             current_index=0,
             votes={}
@@ -281,11 +291,21 @@ class VotingView(View):
         await interaction.response.edit_message(embed=closed_embed, view=None)
 
         # 결과 계산
-        results = self.session.calculate_results()
+        regular_results, zero_results = self.session.calculate_results()
 
-        # 새로운 결과 메시지 전송
-        results_embed = create_results_embed(self.session, results)
-        await interaction.followup.send(embed=results_embed)
+        # 새로운 결과 메시지 전송 (랜덤 선택 버튼 포함)
+        results_embed = create_results_embed(self.session, regular_results, zero_results)
+
+        # 1위 메뉴가 여러 개인 경우에만 랜덤 선택 버튼 표시
+        results_view = None
+        if regular_results:
+            winner_score = regular_results[0][1]
+            winner_min_score = regular_results[0][2]
+            winners = [r for r in regular_results if r[1] == winner_score and r[2] == winner_min_score]
+            if len(winners) > 1:
+                results_view = ResultsView(regular_results)
+
+        await interaction.followup.send(embed=results_embed, view=results_view)
 
         # 세션 정리
         self.manager.close_session(self.session.guild_id)
@@ -301,6 +321,7 @@ class SequentialVotingView(View):
         session: VotingSession,
         manager: VotingManager,
         user_id: int,
+        username: str,
         menu_list: list[str],
         current_index: int,
         votes: Dict[str, int]
@@ -309,6 +330,7 @@ class SequentialVotingView(View):
         self.session = session
         self.manager = manager
         self.user_id = user_id
+        self.username = username
         self.menu_list = menu_list
         self.current_index = current_index
         self.votes = votes
@@ -347,7 +369,7 @@ class SequentialVotingView(View):
             # 모든 메뉴에 투표 완료
             if next_index >= len(self.menu_list):
                 # 투표 제출
-                self.session.submit_vote(self.user_id, self.votes)
+                self.session.submit_vote(self.user_id, self.username, self.votes)
 
                 # 투표 내역 텍스트 생성
                 vote_text = "\n".join([f"• {menu}: {s}점" for menu, s in self.votes.items()])
@@ -356,7 +378,7 @@ class SequentialVotingView(View):
                     content=f"✅ **투표가 완료되었습니다!**\n\n{vote_text}",
                     view=None
                 )
-                logger.info(f"투표 제출: user_id={self.user_id} - {len(self.votes)}개 메뉴")
+                logger.info(f"투표 제출: user_id={self.user_id}, username={self.username} - {len(self.votes)}개 메뉴")
 
                 # 메인 투표 메시지 업데이트
                 await self._update_main_message(interaction)
@@ -368,6 +390,7 @@ class SequentialVotingView(View):
                 self.session,
                 self.manager,
                 self.user_id,
+                self.username,
                 self.menu_list,
                 next_index,
                 self.votes
@@ -410,12 +433,14 @@ class VotingFormView(View):
         session: VotingSession,
         manager: VotingManager,
         user_id: int,
+        username: str,
         existing_votes: Optional[Dict[str, int]] = None
     ):
         super().__init__(timeout=VOTING_FORM_TIMEOUT)
         self.session = session
         self.manager = manager
         self.user_id = user_id
+        self.username = username
         self.user_votes: Dict[str, int] = existing_votes.copy() if existing_votes else {}
         # 수정 모드 여부 (기존 투표가 있으면 True)
         self.is_edit_mode = existing_votes is not None and len(existing_votes) > 0
@@ -473,6 +498,7 @@ class VotingFormView(View):
                 self.session,
                 self.manager,
                 self.user_id,
+                self.username,
                 selected_menu,
                 self.user_votes,
                 is_edit_mode=self.is_edit_mode
@@ -520,7 +546,7 @@ class VotingFormView(View):
                 return
 
             # 투표 제출
-            self.session.submit_vote(self.user_id, self.user_votes)
+            self.session.submit_vote(self.user_id, self.username, self.user_votes)
 
             # 투표 내역 텍스트 생성
             vote_text = "\n".join([f"• {menu}: {score}점" for menu, score in self.user_votes.items()])
@@ -531,7 +557,7 @@ class VotingFormView(View):
                 content=f"{success_message}\n\n{vote_text}",
                 view=None
             )
-            logger.info(f"투표 {'수정' if self.is_edit_mode else '제출'}: user_id={self.user_id} - {len(self.user_votes)}개 메뉴")
+            logger.info(f"투표 {'수정' if self.is_edit_mode else '제출'}: user_id={self.user_id}, username={self.username} - {len(self.user_votes)}개 메뉴")
 
             # 메인 투표 메시지 업데이트
             await self._update_main_message(interaction)
@@ -562,6 +588,7 @@ class ScoreSelectView(View):
         session: VotingSession,
         manager: VotingManager,
         user_id: int,
+        username: str,
         menu_name: str,
         current_votes: Dict[str, int],
         is_edit_mode: bool = False
@@ -570,6 +597,7 @@ class ScoreSelectView(View):
         self.session = session
         self.manager = manager
         self.user_id = user_id
+        self.username = username
         self.menu_name = menu_name
         self.current_votes = current_votes
         self.is_edit_mode = is_edit_mode
@@ -604,6 +632,7 @@ class ScoreSelectView(View):
                 self.session,
                 self.manager,
                 self.user_id,
+                self.username,
                 self.current_votes if self.is_edit_mode else None
             )
 
@@ -632,3 +661,63 @@ class ScoreSelectView(View):
 
         select.callback = callback
         self.add_item(select)
+
+
+class ResultsView(View):
+    """투표 결과 뷰 (랜덤 선택 버튼 포함)"""
+
+    def __init__(self, regular_results: list[tuple[str, int, int]]):
+        super().__init__(timeout=None)
+        self.regular_results = regular_results
+
+    @discord.ui.button(
+        label="🎲 1위 메뉴 중 랜덤 선택",
+        style=discord.ButtonStyle.primary,
+        custom_id="random_select_btn"
+    )
+    async def random_select(self, interaction: discord.Interaction, button: Button):
+        """1위 메뉴 중 랜덤 선택 버튼"""
+        import random
+
+        # 1위 메뉴들 찾기
+        if not self.regular_results:
+            await interaction.response.send_message(
+                "❌ 선택할 메뉴가 없습니다!",
+                ephemeral=True
+            )
+            return
+
+        winner_score = self.regular_results[0][1]
+        winner_min_score = self.regular_results[0][2]
+        winners = [
+            r[0] for r in self.regular_results
+            if r[1] == winner_score and r[2] == winner_min_score
+        ]
+
+        # 랜덤 선택
+        selected_menu = random.choice(winners)
+
+        # 결과 메시지 생성
+        result_embed = discord.Embed(
+            title="🎲 랜덤 선택 결과",
+            description=f"# 🎯 {selected_menu}",
+            color=discord.Color.green()
+        )
+
+        if len(winners) > 1:
+            other_winners = [w for w in winners if w != selected_menu]
+            result_embed.add_field(
+                name="후보 메뉴",
+                value=", ".join(winners),
+                inline=False
+            )
+
+        # 새 메시지로 전송
+        await interaction.response.send_message(embed=result_embed)
+
+        # 버튼 제거
+        button.disabled = True
+        button.label = "✅ 랜덤 선택 완료"
+        await interaction.message.edit(view=self)
+
+        logger.info(f"랜덤 선택 완료: {selected_menu} (후보: {len(winners)}개)")

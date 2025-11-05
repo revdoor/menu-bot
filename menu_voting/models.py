@@ -28,12 +28,19 @@ class VotingSession:
     # 투표 데이터 {user_id: {메뉴명: 점수}}
     votes: Dict[int, Dict[str, int]] = field(default_factory=dict)
 
+    # 투표자 이름 {user_id: username}
+    voter_names: Dict[int, str] = field(default_factory=dict)
+
     # 투표 진행 상태
     voting_started: bool = False
     voting_closed: bool = False
 
     # 메인 투표 메시지 ID (갱신용)
     message_id: Optional[int] = None
+
+    # 투표 제한 설정
+    is_restricted: bool = False  # True면 허용된 사용자만 투표 가능
+    allowed_voters: set[int] = field(default_factory=set)  # 허용된 user_id 집합
 
     def add_menu(self, menu_name: str, proposer_id: int) -> bool:
         """
@@ -55,7 +62,7 @@ class VotingSession:
 
     def remove_menu(self, menu_name: str, user_id: int, is_admin: bool = False) -> bool:
         """
-        메뉴 제안 삭제 (제안자 또는 관리자만 가능)
+        메뉴 제안 삭제 (제안자, 생성자, 또는 관리자만 가능)
 
         Args:
             menu_name: 메뉴 이름
@@ -69,18 +76,52 @@ class VotingSession:
             return False
         if menu_name not in self.menus:
             return False
-        # 관리자가 아니면 제안자만 삭제 가능
-        if not is_admin and self.menus[menu_name] != user_id:
+        # 관리자, 생성자, 또는 제안자만 삭제 가능
+        is_creator = user_id == self.creator_id
+        is_proposer = self.menus[menu_name] == user_id
+        if not (is_admin or is_creator or is_proposer):
             return False
         del self.menus[menu_name]
         return True
 
-    def submit_vote(self, user_id: int, votes: Dict[str, int]) -> bool:
+    def add_allowed_voter(self, user_id: int) -> bool:
+        """
+        투표 허용 목록에 사용자 추가
+
+        Args:
+            user_id: 사용자 ID
+
+        Returns:
+            성공 여부 (제한 모드가 아니면 False)
+        """
+        if not self.is_restricted:
+            return False
+        self.allowed_voters.add(user_id)
+        return True
+
+    def is_voter_allowed(self, user_id: int) -> bool:
+        """
+        사용자가 투표 가능한지 확인
+
+        Args:
+            user_id: 사용자 ID
+
+        Returns:
+            투표 가능 여부
+        """
+        # 제한 모드가 아니면 모두 가능
+        if not self.is_restricted:
+            return True
+        # 제한 모드면 허용 목록에 있거나 생성자인 경우만 가능
+        return user_id in self.allowed_voters or user_id == self.creator_id
+
+    def submit_vote(self, user_id: int, username: str, votes: Dict[str, int]) -> bool:
         """
         투표 제출
 
         Args:
             user_id: 투표자 사용자 ID
+            username: 투표자 이름
             votes: 메뉴별 점수 딕셔너리
 
         Returns:
@@ -89,25 +130,34 @@ class VotingSession:
         if not self.voting_started or self.voting_closed:
             return False
         self.votes[user_id] = votes
+        self.voter_names[user_id] = username
         return True
 
-    def calculate_results(self) -> List[Tuple[str, int, int]]:
+    def calculate_results(self) -> Tuple[List[Tuple[str, int, int]], List[Tuple[str, int, List[str]]]]:
         """
         투표 결과 계산
 
         Returns:
-            List of (메뉴명, 총점, 최소점) 튜플을 점수 순으로 정렬
-            - 1차: 총점 내림차순
-            - 2차: 최소점 내림차순 (동점 처리)
+            Tuple of:
+            - 일반 메뉴 결과: List of (메뉴명, 총점, 최소점) 튜플을 점수 순으로 정렬
+              - 1차: 총점 내림차순
+              - 2차: 최소점 내림차순 (동점 처리)
+            - 0점 메뉴 결과: List of (메뉴명, 총점, 0점을 준 사람들) 튜플
         """
         menu_scores = {}
         menu_min_scores = {}
+        menu_zero_voters = {}  # 0점을 준 사람들
 
         for menu_name in self.menus:
             scores = []
-            for user_votes in self.votes.values():
+            zero_voters = []
+
+            for user_id, user_votes in self.votes.items():
                 if menu_name in user_votes:
-                    scores.append(user_votes[menu_name])
+                    score = user_votes[menu_name]
+                    scores.append(score)
+                    if score == 0:
+                        zero_voters.append(self.voter_names.get(user_id, "Unknown"))
 
             if scores:
                 menu_scores[menu_name] = sum(scores)
@@ -116,14 +166,35 @@ class VotingSession:
                 menu_scores[menu_name] = 0
                 menu_min_scores[menu_name] = 0
 
-        # 총점 내림차순, 동점이면 최소점 내림차순으로 정렬
-        results = [
-            (menu, menu_scores[menu], menu_min_scores[menu])
-            for menu in self.menus
-        ]
-        results.sort(key=lambda x: (x[1], x[2]), reverse=True)
+            menu_zero_voters[menu_name] = zero_voters
 
-        return results
+        # 0점을 받은 메뉴와 일반 메뉴 분리
+        zero_score_menus = []
+        regular_menus = []
+
+        for menu in self.menus:
+            if menu_min_scores[menu] == 0:
+                # 0점을 받은 메뉴
+                zero_score_menus.append((
+                    menu,
+                    menu_scores[menu],
+                    menu_zero_voters[menu]
+                ))
+            else:
+                # 일반 메뉴
+                regular_menus.append((
+                    menu,
+                    menu_scores[menu],
+                    menu_min_scores[menu]
+                ))
+
+        # 일반 메뉴 정렬: 총점 내림차순, 동점이면 최소점 내림차순
+        regular_menus.sort(key=lambda x: (x[1], x[2]), reverse=True)
+
+        # 0점 메뉴 정렬: 총점 내림차순
+        zero_score_menus.sort(key=lambda x: x[1], reverse=True)
+
+        return regular_menus, zero_score_menus
 
 
 class VotingManager:
@@ -138,7 +209,8 @@ class VotingManager:
         guild_id: int,
         channel_id: int,
         creator_id: int,
-        title: str
+        title: str,
+        is_restricted: bool = False
     ) -> Optional[VotingSession]:
         """
         새 투표 세션 생성
@@ -148,6 +220,7 @@ class VotingManager:
             channel_id: 채널 ID
             creator_id: 생성자 사용자 ID
             title: 투표 제목
+            is_restricted: 투표 제한 여부 (True면 허용된 사용자만 투표 가능)
 
         Returns:
             생성된 세션 (이미 세션이 있으면 None)
@@ -159,7 +232,8 @@ class VotingManager:
             title=title,
             guild_id=guild_id,
             channel_id=channel_id,
-            creator_id=creator_id
+            creator_id=creator_id,
+            is_restricted=is_restricted
         )
         self.sessions[guild_id] = session
         return session
