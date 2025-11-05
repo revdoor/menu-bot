@@ -305,7 +305,10 @@ class VotingView(View):
             if len(winners) > 1:
                 results_view = ResultsView(regular_results)
 
-        await interaction.followup.send(embed=results_embed, view=results_view)
+        if results_view:
+            await interaction.followup.send(embed=results_embed, view=results_view)
+        else:
+            await interaction.followup.send(embed=results_embed)
 
         # 세션 정리
         self.manager.close_session(self.session.guild_id)
