@@ -391,7 +391,7 @@ class SequentialVotingView(View):
         select = Select(
             placeholder=f"{current_menu} - 점수를 선택하세요",
             options=options,
-            custom_id="select_score_sequential",
+            custom_id=f"select_score_sequential_{self.user_id}",  # user_id로 고유하게
             row=0
         )
 
@@ -406,6 +406,9 @@ class SequentialVotingView(View):
 
             # 모든 메뉴에 투표 완료
             if next_index >= len(self.menu_list):
+                # 투표 제출 전에 수정 모드인지 확인 (로깅용)
+                was_existing_vote = self.user_id in self.session.votes
+
                 # 투표 제출 (submit_vote 내부에서 deepcopy 수행)
                 self.session.submit_vote(self.user_id, self.username, self.votes)
 
@@ -417,9 +420,10 @@ class SequentialVotingView(View):
                     view=None
                 )
 
-                # 투표 결과 로깅
+                # 투표 결과 로깅 (제출 전 상태 기준)
                 vote_details = ", ".join([f"{menu}:{score}점" for menu, score in self.votes.items()])
-                logger.info(f"투표 제출: {self.username} (user_id={self.user_id}) - {vote_details}")
+                action = "수정" if was_existing_vote else "제출"
+                logger.info(f"투표 {action}: {self.username} (user_id={self.user_id}) - {vote_details}")
 
                 # 메인 투표 메시지 업데이트
                 await self._update_main_message(interaction)
@@ -485,8 +489,8 @@ class VotingFormView(View):
         self.username = username
         # existing_votes는 이미 start_vote()에서 deepcopy된 상태이므로 그대로 사용
         self.user_votes: Dict[str, int] = existing_votes if existing_votes else {}
-        # 수정 모드 여부 (기존 투표가 있으면 True)
-        self.is_edit_mode = existing_votes is not None and len(existing_votes) > 0
+        # 수정 모드 여부: 세션에 이미 이 사용자의 투표가 있는지 확인
+        self.is_edit_mode = user_id in session.votes
 
         # 메뉴 선택 Select 추가
         self._add_menu_select()
@@ -529,7 +533,7 @@ class VotingFormView(View):
         select = Select(
             placeholder=placeholder,
             options=options,
-            custom_id="select_menu",
+            custom_id=f"select_menu_{self.user_id}",  # user_id로 고유하게
             row=0
         )
 
@@ -543,8 +547,7 @@ class VotingFormView(View):
                 self.user_id,
                 self.username,
                 selected_menu,
-                self.user_votes,
-                is_edit_mode=self.is_edit_mode
+                self.user_votes
             )
 
             current_score_text = ""
@@ -574,7 +577,7 @@ class VotingFormView(View):
         button = Button(
             label=label,
             style=discord.ButtonStyle.success,
-            custom_id="submit_vote",
+            custom_id=f"submit_vote_{self.user_id}",  # user_id로 고유하게
             row=1,
             disabled=is_disabled
         )
@@ -587,6 +590,9 @@ class VotingFormView(View):
                     ephemeral=True
                 )
                 return
+
+            # 투표 제출 전에 수정 모드인지 확인 (로깅용)
+            was_existing_vote = self.user_id in self.session.votes
 
             # 투표 제출
             self.session.submit_vote(self.user_id, self.username, self.user_votes)
@@ -601,9 +607,9 @@ class VotingFormView(View):
                 view=None
             )
 
-            # 투표 결과 로깅
+            # 투표 결과 로깅 (제출 전 상태 기준)
             vote_details = ", ".join([f"{menu}:{score}점" for menu, score in self.user_votes.items()])
-            action = "수정" if self.is_edit_mode else "제출"
+            action = "수정" if was_existing_vote else "제출"
             logger.info(f"투표 {action}: {self.username} (user_id={self.user_id}) - {vote_details}")
 
             # 메인 투표 메시지 업데이트
@@ -637,8 +643,7 @@ class ScoreSelectView(View):
         user_id: int,
         username: str,
         menu_name: str,
-        current_votes: Dict[str, int],
-        is_edit_mode: bool = False
+        current_votes: Dict[str, int]
     ):
         super().__init__(timeout=VOTING_FORM_TIMEOUT)
         self.session = session
@@ -666,7 +671,7 @@ class ScoreSelectView(View):
         select = Select(
             placeholder=f"{self.menu_name} - 점수를 선택하세요",
             options=options,
-            custom_id="select_score",
+            custom_id=f"select_score_{self.user_id}",  # user_id로 고유하게
             row=0
         )
 
@@ -684,13 +689,15 @@ class ScoreSelectView(View):
                 self.username,
                 self.current_votes
             )
-            # 수정 모드 플래그 유지
-            menu_view.is_edit_mode = self.is_edit_mode
+            # is_edit_mode는 VotingFormView 생성자에서 자동으로 판단됨
 
             # 진행 상황 텍스트
             voted_text = "\n".join([f"✓ {m}: {s}점" for m, s in self.current_votes.items()])
 
-            if self.is_edit_mode:
+            # 수정 모드 여부를 실시간으로 확인 (세션에 이미 투표가 있는지)
+            is_editing = self.user_id in self.session.votes
+
+            if is_editing:
                 # 수정 모드: 기존 투표 내역 표시
                 await interaction.response.edit_message(
                     content=f"📊 **{self.session.title}** 투표\n\n"
