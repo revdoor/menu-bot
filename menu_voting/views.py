@@ -9,6 +9,7 @@
 """
 import logging
 from typing import Dict, Optional
+from copy import deepcopy
 
 import discord
 from discord.ui import Button, Select, View
@@ -229,7 +230,8 @@ class VotingView(View):
 
         # 기존 투표 내역이 있는 경우 (수정 모드)
         if interaction.user.id in self.session.votes:
-            existing_votes = self.session.votes[interaction.user.id]
+            # Deep copy를 사용하여 기존 투표 내역 복사 (참조 공유 방지)
+            existing_votes = deepcopy(self.session.votes[interaction.user.id])
             form_view = VotingFormView(
                 self.session,
                 self.manager,
@@ -396,6 +398,7 @@ class SequentialVotingView(View):
         async def callback(interaction: discord.Interaction):
             score = int(select.values[0])
             current_menu = self.menu_list[self.current_index]
+            # View 내부 딕셔너리이므로 직접 수정 가능
             self.votes[current_menu] = score
 
             # 다음 메뉴로 이동
@@ -403,7 +406,7 @@ class SequentialVotingView(View):
 
             # 모든 메뉴에 투표 완료
             if next_index >= len(self.menu_list):
-                # 투표 제출
+                # 투표 제출 (submit_vote 내부에서 deepcopy 수행)
                 self.session.submit_vote(self.user_id, self.username, self.votes)
 
                 # 투표 내역 텍스트 생성
@@ -424,6 +427,7 @@ class SequentialVotingView(View):
 
             # 다음 메뉴로 계속
             next_menu = self.menu_list[next_index]
+            # 같은 사용자의 View이므로 같은 딕셔너리 참조 전달
             next_view = SequentialVotingView(
                 self.session,
                 self.manager,
@@ -479,7 +483,8 @@ class VotingFormView(View):
         self.manager = manager
         self.user_id = user_id
         self.username = username
-        self.user_votes: Dict[str, int] = existing_votes.copy() if existing_votes else {}
+        # existing_votes는 이미 start_vote()에서 deepcopy된 상태이므로 그대로 사용
+        self.user_votes: Dict[str, int] = existing_votes if existing_votes else {}
         # 수정 모드 여부 (기존 투표가 있으면 True)
         self.is_edit_mode = existing_votes is not None and len(existing_votes) > 0
 
@@ -667,16 +672,20 @@ class ScoreSelectView(View):
 
         async def callback(interaction: discord.Interaction):
             score = int(select.values[0])
+            # View 내부 딕셔너리이므로 직접 수정 가능
             self.current_votes[self.menu_name] = score
 
             # 다시 메뉴 선택 뷰로 돌아가기
+            # 같은 사용자의 View이므로 같은 딕셔너리 참조 전달
             menu_view = VotingFormView(
                 self.session,
                 self.manager,
                 self.user_id,
                 self.username,
-                self.current_votes if self.is_edit_mode else None
+                self.current_votes
             )
+            # 수정 모드 플래그 유지
+            menu_view.is_edit_mode = self.is_edit_mode
 
             # 진행 상황 텍스트
             voted_text = "\n".join([f"✓ {m}: {s}점" for m, s in self.current_votes.items()])

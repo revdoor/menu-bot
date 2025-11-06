@@ -6,9 +6,11 @@
 - VotingManager: 여러 길드의 투표 세션 관리
 """
 import logging
+import threading
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
 from datetime import datetime
+from copy import deepcopy
 
 logger = logging.getLogger(__name__)
 
@@ -42,6 +44,9 @@ class VotingSession:
     is_restricted: bool = False  # True면 허용된 사용자만 투표 가능
     allowed_voters: set[int] = field(default_factory=set)  # 허용된 user_id 집합
 
+    # 동시성 제어를 위한 락
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False, repr=False)
+
     def add_menu(self, menu_name: str, proposer_id: int) -> bool:
         """
         메뉴 제안 추가
@@ -53,12 +58,13 @@ class VotingSession:
         Returns:
             성공 여부 (투표 시작 후 또는 중복 메뉴면 False)
         """
-        if self.voting_started:
-            return False
-        if menu_name in self.menus:
-            return False
-        self.menus[menu_name] = proposer_id
-        return True
+        with self._lock:
+            if self.voting_started:
+                return False
+            if menu_name in self.menus:
+                return False
+            self.menus[menu_name] = proposer_id
+            return True
 
     def remove_menu(self, menu_name: str, user_id: int, is_admin: bool = False) -> bool:
         """
@@ -72,17 +78,18 @@ class VotingSession:
         Returns:
             성공 여부 (투표 시작 후, 메뉴 없음, 권한 없음이면 False)
         """
-        if self.voting_started:
-            return False
-        if menu_name not in self.menus:
-            return False
-        # 관리자, 생성자, 또는 제안자만 삭제 가능
-        is_creator = user_id == self.creator_id
-        is_proposer = self.menus[menu_name] == user_id
-        if not (is_admin or is_creator or is_proposer):
-            return False
-        del self.menus[menu_name]
-        return True
+        with self._lock:
+            if self.voting_started:
+                return False
+            if menu_name not in self.menus:
+                return False
+            # 관리자, 생성자, 또는 제안자만 삭제 가능
+            is_creator = user_id == self.creator_id
+            is_proposer = self.menus[menu_name] == user_id
+            if not (is_admin or is_creator or is_proposer):
+                return False
+            del self.menus[menu_name]
+            return True
 
     def add_allowed_voter(self, user_id: int) -> bool:
         """
@@ -127,11 +134,13 @@ class VotingSession:
         Returns:
             성공 여부 (투표 미시작 또는 종료 시 False)
         """
-        if not self.voting_started or self.voting_closed:
-            return False
-        self.votes[user_id] = votes
-        self.voter_names[user_id] = username
-        return True
+        with self._lock:
+            if not self.voting_started or self.voting_closed:
+                return False
+            # Deep copy를 사용하여 votes 딕셔너리 저장 (참조 공유 방지)
+            self.votes[user_id] = deepcopy(votes)
+            self.voter_names[user_id] = username
+            return True
 
     def calculate_results(self) -> Tuple[List[Tuple[str, int, int]], List[Tuple[str, int, List[str]]]]:
         """

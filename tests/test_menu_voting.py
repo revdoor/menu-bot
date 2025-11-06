@@ -787,3 +787,239 @@ class TestVoterNameTracking:
 
         session.submit_vote(10, "바뀐이름", {"메뉴A": 3})
         assert session.voter_names[10] == "바뀐이름"
+
+
+@pytest.mark.unit
+class TestConcurrentVoting:
+    """동시 투표 테스트 (Thread Safety)"""
+
+    def test_concurrent_vote_submission(self):
+        """여러 사용자가 동시에 투표해도 데이터가 섞이지 않음"""
+        import threading
+
+        session = VotingSession("동시 투표 테스트", 123, 456, 789)
+        session.add_menu("메뉴A", 1)
+        session.add_menu("메뉴B", 2)
+        session.add_menu("메뉴C", 3)
+        session.voting_started = True
+
+        # 투표 성공 여부를 추적
+        results = {}
+        errors = []
+
+        def vote_user(user_id: int, username: str, votes: dict):
+            """사용자 투표 함수"""
+            try:
+                success = session.submit_vote(user_id, username, votes)
+                results[user_id] = success
+            except Exception as e:
+                errors.append((user_id, str(e)))
+
+        # 100명의 사용자가 동시에 투표
+        threads = []
+        for i in range(100):
+            user_id = 1000 + i
+            username = f"유저{i}"
+            votes = {
+                "메뉴A": (i % 5) + 1,  # 1-5점
+                "메뉴B": ((i + 1) % 5) + 1,
+                "메뉴C": ((i + 2) % 5) + 1
+            }
+            thread = threading.Thread(target=vote_user, args=(user_id, username, votes))
+            threads.append(thread)
+            thread.start()
+
+        # 모든 스레드 종료 대기
+        for thread in threads:
+            thread.join()
+
+        # 검증
+        assert len(errors) == 0, f"투표 중 에러 발생: {errors}"
+        assert len(results) == 100, "모든 사용자의 투표가 기록되어야 함"
+        assert all(results.values()), "모든 투표가 성공해야 함"
+        assert len(session.votes) == 100, "세션에 100개의 투표가 저장되어야 함"
+        assert len(session.voter_names) == 100, "100명의 투표자 이름이 저장되어야 함"
+
+    def test_concurrent_vote_data_integrity(self):
+        """동시 투표 시 각 사용자의 투표 데이터가 정확히 저장됨"""
+        import threading
+
+        session = VotingSession("데이터 무결성 테스트", 123, 456, 789)
+        session.add_menu("짜장면", 1)
+        session.add_menu("짬뽕", 2)
+        session.voting_started = True
+
+        # 예상 투표 데이터
+        expected_votes = {}
+
+        def vote_user(user_id: int, username: str):
+            """각 사용자가 고유한 점수로 투표"""
+            votes = {
+                "짜장면": user_id % 6,  # 0-5점
+                "짬뽕": (user_id + 3) % 6
+            }
+            expected_votes[user_id] = votes.copy()
+            session.submit_vote(user_id, username, votes)
+
+        # 50명의 사용자가 동시에 투표
+        threads = []
+        for i in range(50):
+            user_id = 2000 + i
+            username = f"테스터{i}"
+            thread = threading.Thread(target=vote_user, args=(user_id, username))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # 각 사용자의 투표 데이터가 정확한지 검증
+        assert len(session.votes) == 50
+        for user_id, expected in expected_votes.items():
+            actual = session.votes[user_id]
+            assert actual == expected, f"사용자 {user_id}의 투표 데이터가 일치하지 않음: 예상={expected}, 실제={actual}"
+
+    def test_concurrent_vote_with_modifications(self):
+        """동시에 투표하고 수정해도 데이터가 정확함"""
+        import threading
+        import time
+
+        session = VotingSession("수정 테스트", 123, 456, 789)
+        session.add_menu("메뉴1", 1)
+        session.add_menu("메뉴2", 2)
+        session.voting_started = True
+
+        modification_count = [0]  # 수정 횟수 추적
+
+        def vote_and_modify(user_id: int):
+            """투표 후 여러 번 수정"""
+            # 첫 투표
+            session.submit_vote(user_id, f"유저{user_id}", {
+                "메뉴1": 3,
+                "메뉴2": 4
+            })
+
+            # 짧은 대기 후 수정
+            time.sleep(0.001)
+            session.submit_vote(user_id, f"유저{user_id}_수정", {
+                "메뉴1": 5,
+                "메뉴2": 2
+            })
+            modification_count[0] += 1
+
+        # 20명이 동시에 투표하고 수정
+        threads = []
+        for i in range(20):
+            user_id = 3000 + i
+            thread = threading.Thread(target=vote_and_modify, args=(user_id,))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # 검증
+        assert len(session.votes) == 20, "20명의 투표가 있어야 함"
+        assert modification_count[0] == 20, "모든 사용자가 수정을 완료해야 함"
+
+        # 모든 투표가 최종 값으로 저장되었는지 확인
+        for user_id in range(3000, 3020):
+            assert session.votes[user_id] == {"메뉴1": 5, "메뉴2": 2}, \
+                f"사용자 {user_id}의 최종 투표가 정확하지 않음"
+
+    def test_concurrent_menu_additions(self):
+        """여러 사용자가 동시에 메뉴를 추가해도 중복 없음"""
+        import threading
+
+        session = VotingSession("메뉴 추가 테스트", 123, 456, 789)
+
+        add_results = {}
+
+        def add_menu(user_id: int, menu_name: str):
+            """메뉴 추가 시도"""
+            result = session.add_menu(menu_name, user_id)
+            add_results[user_id] = result
+
+        # 같은 메뉴를 10명이 동시에 추가 시도
+        threads = []
+        for i in range(10):
+            user_id = 4000 + i
+            thread = threading.Thread(target=add_menu, args=(user_id, "인기메뉴"))
+            threads.append(thread)
+            thread.start()
+
+        for thread in threads:
+            thread.join()
+
+        # 검증: 정확히 1명만 성공해야 함
+        success_count = sum(1 for result in add_results.values() if result)
+        assert success_count == 1, "정확히 1명만 메뉴 추가에 성공해야 함"
+        assert len(session.menus) == 1, "중복 메뉴가 추가되지 않아야 함"
+        assert "인기메뉴" in session.menus, "메뉴가 추가되어야 함"
+
+    def test_vote_isolation_between_users(self):
+        """두 명이 동시에 투표할 때 서로 영향을 주지 않음 (핵심 테스트)"""
+        import threading
+
+        session = VotingSession("사용자 격리 테스트", 123, 456, 789)
+        session.add_menu("피자", 1)
+        session.add_menu("치킨", 2)
+        session.add_menu("햄버거", 3)
+        session.voting_started = True
+
+        # 사용자 A와 B가 각각 다른 점수로 투표
+        user_a_votes = {"피자": 5, "치킨": 3, "햄버거": 1}
+        user_b_votes = {"피자": 2, "치킨": 5, "햄버거": 4}
+
+        barrier = threading.Barrier(2)  # 두 스레드가 동시에 실행되도록
+
+        def vote_user_a():
+            barrier.wait()  # 동기화 지점
+            session.submit_vote(5001, "사용자A", user_a_votes)
+
+        def vote_user_b():
+            barrier.wait()  # 동기화 지점
+            session.submit_vote(5002, "사용자B", user_b_votes)
+
+        thread_a = threading.Thread(target=vote_user_a)
+        thread_b = threading.Thread(target=vote_user_b)
+
+        thread_a.start()
+        thread_b.start()
+
+        thread_a.join()
+        thread_b.join()
+
+        # 검증: 각 사용자의 투표가 정확히 저장되었는지
+        assert session.votes[5001] == user_a_votes, \
+            f"사용자A 투표 오염: 예상={user_a_votes}, 실제={session.votes[5001]}"
+        assert session.votes[5002] == user_b_votes, \
+            f"사용자B 투표 오염: 예상={user_b_votes}, 실제={session.votes[5002]}"
+        assert session.votes[5001] != session.votes[5002], \
+            "두 사용자의 투표가 같으면 안됨"
+        assert session.voter_names[5001] == "사용자A"
+        assert session.voter_names[5002] == "사용자B"
+
+    def test_vote_dictionary_deep_copy(self):
+        """투표 딕셔너리가 deep copy되어 원본이 변경되어도 영향 없음"""
+        session = VotingSession("Deep Copy 테스트", 123, 456, 789)
+        session.add_menu("메뉴X", 1)
+        session.add_menu("메뉴Y", 2)
+        session.voting_started = True
+
+        # 원본 투표 딕셔너리
+        original_votes = {"메뉴X": 5, "메뉴Y": 3}
+
+        # 투표 제출
+        session.submit_vote(6001, "테스트유저", original_votes)
+
+        # 투표 제출 후 원본 수정
+        original_votes["메뉴X"] = 1
+        original_votes["메뉴Y"] = 1
+        original_votes["메뉴Z"] = 999  # 존재하지 않는 메뉴 추가
+
+        # 검증: 세션에 저장된 투표는 변경되지 않아야 함
+        stored_votes = session.votes[6001]
+        assert stored_votes["메뉴X"] == 5, "저장된 투표가 원본 변경의 영향을 받으면 안됨"
+        assert stored_votes["메뉴Y"] == 3, "저장된 투표가 원본 변경의 영향을 받으면 안됨"
+        assert "메뉴Z" not in stored_votes, "원본에 추가된 키가 저장된 투표에 나타나면 안됨"
