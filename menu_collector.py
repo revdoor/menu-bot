@@ -22,7 +22,8 @@ from config import (
     RESTAURANT_CODES,
     RESTAURANTS_BY_MEAL_TYPE,
     MEAL_INFO,
-    LOG_MESSAGES
+    LOG_MESSAGES,
+    MENU_PARSE_KEYWORDS
 )
 
 # 로거 설정
@@ -109,14 +110,41 @@ class MenuParser:
         return headers
 
     @staticmethod
+    def extract_menu_from_keyword(text: str, keyword: str) -> str:
+        """
+        키워드 및 그 이후의 텍스트 추출
+
+        Args:
+            text: 전체 메뉴 텍스트
+            keyword: 검색할 키워드
+
+        Returns:
+            키워드 및 그 이후의 텍스트. 키워드가 없으면 원본 텍스트 반환
+        """
+        if not keyword or keyword not in text:
+            return text
+
+        # 키워드 위치 찾기
+        keyword_index = text.find(keyword)
+        if keyword_index == -1:
+            return text
+
+        # 키워드부터 끝까지 추출
+        return text[keyword_index:].strip()
+
+    @staticmethod
     def parse_menu_rows(
         table,
         headers: list[str],
-        meal_type: str
+        meal_type: str,
+        restaurant_name: str
     ) -> list[str]:
         """테이블에서 메뉴 행 파싱"""
         menus = []
         rows = table.select('tbody tr')
+
+        # 식당별 키워드 가져오기
+        keyword = MENU_PARSE_KEYWORDS.get(restaurant_name, None)
 
         for row in rows:
             cells = row.select('td')
@@ -134,6 +162,10 @@ class MenuParser:
 
                 if not menu_content or menu_content in ["", "-", "운영안함"]:
                     continue
+
+                # 키워드가 있으면 키워드 이후 텍스트만 추출
+                if keyword:
+                    menu_content = MenuParser.extract_menu_from_keyword(menu_content, keyword)
 
                 menus.append(menu_content)
 
@@ -175,7 +207,7 @@ class MenuCollector:
                 if not headers:
                     return []
 
-                menus = self.parser.parse_menu_rows(table, headers, meal_type)
+                menus = self.parser.parse_menu_rows(table, headers, meal_type, restaurant_name)
                 logger.debug(f"{restaurant_name}: {len(menus)}개 메뉴")
 
                 return menus

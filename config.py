@@ -30,6 +30,13 @@ RESTAURANT_CODES: Dict[str, str] = {
     'east2': '동맛골(동측 교직원식당)'
 }
 
+# 식당별 메뉴 파싱 키워드 (이 키워드 및 그 이후 텍스트를 추출)
+MENU_PARSE_KEYWORDS: Dict[str, str] = {
+    '서맛골(서측식당)': '일품',
+    '동맛골(동측학생식당)': '<일품코너',
+    '동맛골(동측 교직원식당)': '<특식'
+}
+
 # 식사 타입별 식당 목록
 RESTAURANTS_BY_MEAL_TYPE: Dict[str, List[str]] = {
     '중식': ['west', 'east1', 'east2'],
