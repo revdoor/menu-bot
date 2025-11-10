@@ -154,7 +154,8 @@ class MenuParser:
                     continue
 
                 meal_type_raw = headers[i]
-                menu_content = cell.get_text(strip=True)
+                # separator=' '를 사용하여 태그 사이에 공백 추가
+                menu_content = cell.get_text(separator=' ', strip=True)
 
                 # meal_type 매칭 및 유효성 검증
                 if meal_type not in meal_type_raw:
