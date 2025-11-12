@@ -7,6 +7,7 @@ KAIST 메뉴봇 - Discord Bot
 - 메뉴 투표 (/투표시작, /메뉴제안, /메뉴제안취소)
 - 스티커 사용 통계 (/스티커체크)
 - TTS 기능 (/tts시작, /tts종료)
+- 같이먹자 기능 (/같이먹자)
 """
 import os
 import logging
@@ -30,6 +31,11 @@ from menu_voting import (
     create_proposal_embed,
     update_voting_message,
     is_admin
+)
+from eat_together import (
+    EatTogetherManager,
+    EatTogetherView,
+    create_eat_together_embed
 )
 from config import (
     PING_INTERVAL_SECONDS,
@@ -73,6 +79,9 @@ tts_manager = TTSManager()
 
 # 투표 관리자 인스턴스
 voting_manager = VotingManager()
+
+# 같이먹자 관리자 인스턴스
+eat_together_manager = EatTogetherManager()
 
 
 # ==================== Error Handling ====================
@@ -689,6 +698,40 @@ async def reset_session(interaction: discord.Interaction) -> None:
                 await interaction.response.send_message("❌ 오류가 발생했습니다.", ephemeral=True)
         except:
             pass
+
+
+# ==================== Eat Together Commands ====================
+
+@bot.tree.command(name='같이먹자', description='같이 먹을 사람을 모집합니다')
+@app_commands.describe(메뉴='먹을 메뉴 (예: 짜장면, 치킨, 피자)')
+@handle_interaction_errors
+async def eat_together(interaction: discord.Interaction, 메뉴: str) -> None:
+    """같이먹자 명령어"""
+    await interaction.response.defer()
+
+    guild_id = interaction.guild.id
+    channel_id = interaction.channel.id
+    creator_id = interaction.user.id
+
+    # 새 세션 생성
+    session_id, session = eat_together_manager.create_session(
+        guild_id,
+        channel_id,
+        creator_id,
+        메뉴
+    )
+
+    logger.info(f"같이먹자 세션 생성: {메뉴} (생성자: {interaction.user.name}, session_id: {session_id})")
+
+    # Embed 및 View 생성
+    embed = create_eat_together_embed(session, interaction.guild)
+    view = EatTogetherView(session_id, session, eat_together_manager)
+
+    # 메시지 전송
+    message = await interaction.followup.send(embed=embed, view=view, wait=True)
+    session.message_id = message.id
+
+    logger.info(f"같이먹자 메시지 전송 완료: {메뉴} (message_id: {message.id})")
 
 
 # ==================== Bot Start ====================
