@@ -34,7 +34,7 @@ async def update_voting_message(interaction: discord.Interaction, session: Votin
     try:
         # 투표 시작 전이면 제안 Embed, 시작 후면 투표 Embed
         if session.voting_started:
-            updated_embed = create_voting_embed(session)
+            updated_embed = create_voting_embed(session, interaction.guild)
             logger.debug("투표 진행 중 Embed 생성")
         else:
             updated_embed = create_proposal_embed(session)

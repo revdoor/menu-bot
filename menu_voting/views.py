@@ -145,7 +145,7 @@ class MenuProposalView(View):
         await interaction.response.edit_message(embed=closed_embed, view=None)
 
         # 새로운 투표 메시지 전송
-        voting_embed = create_voting_embed(self.session)
+        voting_embed = create_voting_embed(self.session, interaction.guild)
         voting_view = VotingView(self.session, self.manager)
 
         voting_message = await interaction.followup.send(
@@ -336,10 +336,14 @@ class VotingView(View):
             if len(winners) > 1:
                 results_view = ResultsView(regular_results)
 
+        # 참여자 멘션 생성
+        voter_mentions = " ".join([f"<@{user_id}>" for user_id in self.session.votes.keys()])
+        mention_message = f"🏆 **투표 결과 발표!** {voter_mentions}"
+
         if results_view:
-            await interaction.followup.send(embed=results_embed, view=results_view)
+            await interaction.followup.send(content=mention_message, embed=results_embed, view=results_view)
         else:
-            await interaction.followup.send(embed=results_embed)
+            await interaction.followup.send(content=mention_message, embed=results_embed)
 
         # 결과 로깅
         _log_voting_results(self.session.title, regular_results, zero_results, len(self.session.votes))
@@ -464,7 +468,7 @@ class SequentialVotingView(View):
         try:
             # 투표 진행 중이면 투표 Embed 업데이트
             if self.session.voting_started and not self.session.voting_closed:
-                updated_embed = create_voting_embed(self.session)
+                updated_embed = create_voting_embed(self.session, interaction.guild)
                 await interaction.followup.edit_message(self.session.message_id, embed=updated_embed)
                 logger.info(f"투표 현황 업데이트: {len(self.session.votes)}명 투표 완료")
         except Exception as e:
@@ -626,7 +630,7 @@ class VotingFormView(View):
         try:
             # 투표 진행 중이면 투표 Embed 업데이트
             if self.session.voting_started and not self.session.voting_closed:
-                updated_embed = create_voting_embed(self.session)
+                updated_embed = create_voting_embed(self.session, interaction.guild)
                 await interaction.followup.edit_message(self.session.message_id, embed=updated_embed)
                 logger.info(f"투표 현황 업데이트: {len(self.session.votes)}명 투표 완료")
         except Exception as e:

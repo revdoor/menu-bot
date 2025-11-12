@@ -66,12 +66,13 @@ def create_proposal_embed(session: VotingSession) -> discord.Embed:
     return embed
 
 
-def create_voting_embed(session: VotingSession) -> discord.Embed:
+def create_voting_embed(session: VotingSession, guild: discord.Guild = None) -> discord.Embed:
     """
     투표 진행 단계 Embed 생성
 
     Args:
         session: 투표 세션
+        guild: Discord 길드 (멘션 생성용, None이면 이름만 표시)
 
     Returns:
         투표 진행 Embed
@@ -97,11 +98,21 @@ def create_voting_embed(session: VotingSession) -> discord.Embed:
         inline=False
     )
 
-    # 투표 현황 - 투표자 이름 표시
+    # 투표 현황 - 투표자 멘션 표시
     voter_count = len(session.votes)
     if voter_count > 0:
-        voter_names = ", ".join(session.voter_names.values())
-        status_text = f"{voter_count}명 투표 완료\n{voter_names}"
+        voter_mentions = []
+        for user_id in session.votes.keys():
+            if guild:
+                member = guild.get_member(user_id)
+                if member:
+                    voter_mentions.append(member.mention)
+                else:
+                    voter_mentions.append(f"<@{user_id}>")
+            else:
+                voter_mentions.append(f"<@{user_id}>")
+
+        status_text = f"{voter_count}명 투표 완료\n" + " ".join(voter_mentions)
     else:
         status_text = "아직 투표한 사람이 없습니다"
 
