@@ -228,7 +228,7 @@ def create_eat_together_embed(session: EatTogetherSession, guild: discord.Guild)
     )
 
     if not session.departed:
-        embed.set_footer(text="'참여!' 버튼을 눌러 참여하세요. 생성자는 '출발!' 버튼으로 출발할 수 있습니다.")
+        embed.set_footer(text="'참여!' 버튼을 눌러 참여/취소할 수 있습니다. 생성자는 '출발!' 버튼으로 출발할 수 있습니다.")
 
     return embed
 
@@ -270,7 +270,12 @@ class EatTogetherView(View):
         if user_id in session.participants:
             # 참여 취소 처리
             if session.remove_participant(user_id):
-                await interaction.response.send_message(
+                # Embed 업데이트
+                updated_embed = create_eat_together_embed(session, interaction.guild)
+                await interaction.response.edit_message(embed=updated_embed)
+
+                # 사용자에게 피드백 (followup)
+                await interaction.followup.send(
                     f"👋 **{session.food_name}** 모임에서 나갔습니다.",
                     ephemeral=True
                 )
@@ -284,7 +289,12 @@ class EatTogetherView(View):
         else:
             # 참여 처리
             if session.add_participant(user_id):
-                await interaction.response.send_message(
+                # Embed 업데이트
+                updated_embed = create_eat_together_embed(session, interaction.guild)
+                await interaction.response.edit_message(embed=updated_embed)
+
+                # 사용자에게 피드백 (followup)
+                await interaction.followup.send(
                     f"✅ **{session.food_name}** 모임에 참여했습니다!",
                     ephemeral=True
                 )
@@ -295,10 +305,6 @@ class EatTogetherView(View):
                     ephemeral=True
                 )
                 return
-
-        # Embed 업데이트
-        updated_embed = create_eat_together_embed(session, interaction.guild)
-        await interaction.message.edit(embed=updated_embed)
 
     @discord.ui.button(
         label="출발!",
