@@ -656,7 +656,6 @@ class ScoreSelectView(View):
         self.username = username
         self.menu_name = menu_name
         self.current_votes = current_votes
-        self.is_edit_mode = is_edit_mode
 
         # 점수 선택 Select 추가
         self._add_score_select()
