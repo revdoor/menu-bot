@@ -813,23 +813,22 @@ class ResultsView(View):
         # 기존 세션 정보 저장 (세션은 이미 투표 종료 시 삭제됨)
         guild_id = self.session.guild_id
         channel_id = self.session.channel_id
-        is_restricted = self.session.is_restricted
-        allowed_voters = self.session.allowed_voters.copy() if self.session.is_restricted else set()
         original_title = self.session.title
+        # 재투표는 항상 기존 투표자들로만 제한
+        previous_voters = set(self.session.votes.keys())
 
-        # 새로운 투표 세션 생성 (1위 메뉴들로만)
+        # 새로운 투표 세션 생성 (1위 메뉴들로만, 항상 제한 모드)
         new_session = self.manager.create_session(
             guild_id=guild_id,
             channel_id=channel_id,
             creator_id=interaction.user.id,
             title=f"[재투표] {original_title}",
-            is_restricted=is_restricted
+            is_restricted=True  # 재투표는 항상 제한 모드
         )
 
-        # 재투표에서도 기존 투표자들이 투표할 수 있도록 설정
-        if is_restricted:
-            for voter_id in allowed_voters:
-                new_session.allow_voter(voter_id)
+        # 기존 투표자들만 재투표 가능하도록 설정
+        for voter_id in previous_voters:
+            new_session.allow_voter(voter_id)
 
         # 1위 메뉴들만 추가
         for menu_name in winners:
