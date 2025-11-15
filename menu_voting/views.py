@@ -828,7 +828,7 @@ class ResultsView(View):
 
         # 기존 투표자들만 재투표 가능하도록 설정
         for voter_id in previous_voters:
-            new_session.allow_voter(voter_id)
+            new_session.add_allowed_voter(voter_id)
 
         # 1위 메뉴들만 추가
         for menu_name in winners:
