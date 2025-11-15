@@ -327,14 +327,14 @@ class VotingView(View):
         # 새로운 결과 메시지 전송 (랜덤 선택 버튼 포함)
         results_embed = create_results_embed(self.session, regular_results, zero_results)
 
-        # 1위 메뉴가 여러 개인 경우에만 랜덤 선택 버튼 표시
+        # 1위 메뉴가 여러 개인 경우에만 랜덤 선택/재투표 버튼 표시
         results_view = None
         if regular_results:
             winner_score = regular_results[0][1]
             winner_min_score = regular_results[0][2]
             winners = [r for r in regular_results if r[1] == winner_score and r[2] == winner_min_score]
             if len(winners) > 1:
-                results_view = ResultsView(regular_results)
+                results_view = ResultsView(regular_results, self.session, self.manager)
 
         # 참여자 멘션 생성
         voter_mentions = " ".join([f"<@{user_id}>" for user_id in self.session.votes.keys()])
@@ -726,16 +726,24 @@ class ScoreSelectView(View):
 
 
 class ResultsView(View):
-    """투표 결과 뷰 (랜덤 선택 버튼 포함)"""
+    """투표 결과 뷰 (랜덤 선택 및 재투표 버튼 포함)"""
 
-    def __init__(self, regular_results: list[tuple[str, int, int]]):
+    def __init__(
+        self,
+        regular_results: list[tuple[str, int, int]],
+        session: VotingSession,
+        manager: VotingManager
+    ):
         super().__init__(timeout=None)
         self.regular_results = regular_results
+        self.session = session
+        self.manager = manager
 
     @discord.ui.button(
         label="🎲 1위 메뉴 중 랜덤 선택",
         style=discord.ButtonStyle.primary,
-        custom_id="random_select_btn"
+        custom_id="random_select_btn",
+        row=0
     )
     async def random_select(self, interaction: discord.Interaction, button: Button):
         """1위 메뉴 중 랜덤 선택 버튼"""
@@ -777,9 +785,79 @@ class ResultsView(View):
         # 새 메시지로 전송
         await interaction.response.send_message(embed=result_embed)
 
-        # 버튼 제거
-        button.disabled = True
+        # 두 버튼 모두 비활성화
+        for child in self.children:
+            if isinstance(child, Button):
+                child.disabled = True
+
         button.label = "✅ 랜덤 선택 완료"
         await interaction.message.edit(view=self)
 
         logger.info(f"랜덤 선택 완료: {selected_menu} (후보: {len(winners)}개)")
+
+    @discord.ui.button(
+        label="🔄 1위 메뉴 재투표",
+        style=discord.ButtonStyle.secondary,
+        custom_id="revote_btn",
+        row=0
+    )
+    async def revote(self, interaction: discord.Interaction, button: Button):
+        """1위 메뉴 재투표 버튼"""
+        # 세션 확인
+        if not _check_session_exists(self.session, self.manager):
+            await _handle_orphaned_message(interaction)
+            return
+
+        # 1위 메뉴들 찾기
+        winner_score = self.regular_results[0][1]
+        winner_min_score = self.regular_results[0][2]
+        winners = [
+            r[0] for r in self.regular_results
+            if r[1] == winner_score and r[2] == winner_min_score
+        ]
+
+        # 기존 세션 종료
+        self.manager.close_session(self.session.guild_id)
+
+        # 새로운 투표 세션 생성 (1위 메뉴들로만)
+        new_session = self.manager.create_session(
+            guild_id=self.session.guild_id,
+            channel_id=self.session.channel_id,
+            creator_id=interaction.user.id,
+            title=f"[재투표] {self.session.title}",
+            is_restricted=self.session.is_restricted
+        )
+
+        # 재투표에서도 기존 투표자들이 투표할 수 있도록 설정
+        if self.session.is_restricted:
+            for voter_id in self.session.allowed_voters:
+                new_session.allow_voter(voter_id)
+
+        # 1위 메뉴들만 추가
+        for menu_name in winners:
+            new_session.add_menu(menu_name, interaction.user.id)
+
+        # 투표 시작
+        new_session.start_voting()
+
+        # 투표 embed 생성
+        voting_embed = create_voting_embed(new_session)
+        voting_view = VotingView(new_session, self.manager)
+
+        # 응답 전송
+        await interaction.response.send_message(
+            content=f"🔄 **1위 메뉴들로 재투표를 시작합니다!**\n"
+                    f"후보: {', '.join(winners)}",
+            embed=voting_embed,
+            view=voting_view
+        )
+
+        # 두 버튼 모두 비활성화
+        for child in self.children:
+            if isinstance(child, Button):
+                child.disabled = True
+
+        button.label = "✅ 재투표 시작됨"
+        await interaction.message.edit(view=self)
+
+        logger.info(f"재투표 시작: {len(winners)}개 메뉴 ({', '.join(winners)})")
