@@ -802,11 +802,6 @@ class ResultsView(View):
     )
     async def revote(self, interaction: discord.Interaction, button: Button):
         """1위 메뉴 재투표 버튼"""
-        # 세션 확인
-        if not _check_session_exists(self.session, self.manager):
-            await _handle_orphaned_message(interaction)
-            return
-
         # 1위 메뉴들 찾기
         winner_score = self.regular_results[0][1]
         winner_min_score = self.regular_results[0][2]
@@ -815,15 +810,12 @@ class ResultsView(View):
             if r[1] == winner_score and r[2] == winner_min_score
         ]
 
-        # 기존 세션 정보 저장 (종료 전에 미리 저장)
+        # 기존 세션 정보 저장 (세션은 이미 투표 종료 시 삭제됨)
         guild_id = self.session.guild_id
         channel_id = self.session.channel_id
         is_restricted = self.session.is_restricted
         allowed_voters = self.session.allowed_voters.copy() if self.session.is_restricted else set()
         original_title = self.session.title
-
-        # 기존 세션 종료
-        self.manager.close_session(guild_id)
 
         # 새로운 투표 세션 생성 (1위 메뉴들로만)
         new_session = self.manager.create_session(
