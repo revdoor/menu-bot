@@ -836,7 +836,7 @@ class ResultsView(View):
             new_session.add_menu(menu_name, interaction.user.id)
 
         # 투표 시작
-        new_session.start_voting()
+        new_session.voting_started = True
 
         # 투표 embed 생성
         voting_embed = create_voting_embed(new_session)
