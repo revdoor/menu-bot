@@ -849,6 +849,11 @@ class ResultsView(View):
             view=voting_view
         )
 
+        # 재투표 메시지 ID 저장 (투표 현황 갱신용)
+        revote_message = await interaction.original_response()
+        new_session.message_id = revote_message.id
+        logger.info(f"재투표 메시지 ID 저장: {revote_message.id}")
+
         # 두 버튼 모두 비활성화
         for child in self.children:
             if isinstance(child, Button):
