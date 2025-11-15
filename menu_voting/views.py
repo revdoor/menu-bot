@@ -816,21 +816,28 @@ class ResultsView(View):
             if r[1] == winner_score and r[2] == winner_min_score
         ]
 
+        # 기존 세션 정보 저장 (종료 전에 미리 저장)
+        guild_id = self.session.guild_id
+        channel_id = self.session.channel_id
+        is_restricted = self.session.is_restricted
+        allowed_voters = self.session.allowed_voters.copy() if self.session.is_restricted else set()
+        original_title = self.session.title
+
         # 기존 세션 종료
-        self.manager.close_session(self.session.guild_id)
+        self.manager.close_session(guild_id)
 
         # 새로운 투표 세션 생성 (1위 메뉴들로만)
         new_session = self.manager.create_session(
-            guild_id=self.session.guild_id,
-            channel_id=self.session.channel_id,
+            guild_id=guild_id,
+            channel_id=channel_id,
             creator_id=interaction.user.id,
-            title=f"[재투표] {self.session.title}",
-            is_restricted=self.session.is_restricted
+            title=f"[재투표] {original_title}",
+            is_restricted=is_restricted
         )
 
         # 재투표에서도 기존 투표자들이 투표할 수 있도록 설정
-        if self.session.is_restricted:
-            for voter_id in self.session.allowed_voters:
+        if is_restricted:
+            for voter_id in allowed_voters:
                 new_session.allow_voter(voter_id)
 
         # 1위 메뉴들만 추가
