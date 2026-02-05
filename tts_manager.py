@@ -17,6 +17,7 @@ from typing import Dict, Optional
 
 import discord
 import edge_tts
+from edge_tts.exceptions import NoAudioReceived
 
 
 # URL 패턴 (http, https, www로 시작하는 링크)
@@ -57,12 +58,13 @@ def preprocess_text_for_tts(text: str) -> str:
 
     - URL을 '링크'로 대체
     - 이모지 제거 (유니코드 및 Discord 커스텀 이모지)
+    - 읽을 수 있는 문자가 없으면 빈 문자열 반환
 
     Args:
         text: 원본 텍스트
 
     Returns:
-        전처리된 텍스트
+        전처리된 텍스트 (읽을 내용이 없으면 빈 문자열)
     """
     # URL을 '링크'로 대체
     text = URL_PATTERN.sub('링크', text)
@@ -75,6 +77,10 @@ def preprocess_text_for_tts(text: str) -> str:
 
     # 연속된 공백 정리
     text = re.sub(r'\s+', ' ', text).strip()
+
+    # 읽을 수 있는 문자(한글, 영문, 숫자)가 있는지 확인
+    if not re.search(r'[가-힣a-zA-Z0-9]', text):
+        return ''
 
     return text
 
@@ -272,6 +278,10 @@ class TTSManager:
                 await asyncio.sleep(0.1)
 
             logger.debug(f"TTS 재생 완료: '{text}'")
+
+        except NoAudioReceived:
+            # 텍스트를 음성으로 변환할 수 없는 경우 (특수문자만 있는 등)
+            logger.debug(f"TTS 변환 불가 텍스트, 건너뜀: '{processed_text}'")
 
         except Exception as e:
             logger.error(f"TTS 재생 중 에러: {e}", exc_info=True)
