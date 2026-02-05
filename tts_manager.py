@@ -51,6 +51,46 @@ EMOJI_PATTERN = re.compile(
 # Discord 커스텀 이모지 패턴 <:name:id> 또는 <a:name:id>
 DISCORD_EMOJI_PATTERN = re.compile(r'<a?:\w+:\d+>')
 
+# 한글 초성 -> 발음 매핑
+CHOSEONG_TO_PRONUNCIATION = {
+    'ㄱ': '그', 'ㄲ': '끄', 'ㄴ': '느', 'ㄷ': '드', 'ㄸ': '뜨',
+    'ㄹ': '르', 'ㅁ': '므', 'ㅂ': '브', 'ㅃ': '쁘', 'ㅅ': '스',
+    'ㅆ': '쓰', 'ㅇ': '응', 'ㅈ': '즈', 'ㅉ': '쯔', 'ㅊ': '츠',
+    'ㅋ': '크', 'ㅌ': '트', 'ㅍ': '프', 'ㅎ': '흐',
+}
+
+# 한글 모음 -> 발음 매핑
+JUNGSEONG_TO_PRONUNCIATION = {
+    'ㅏ': '아', 'ㅐ': '애', 'ㅑ': '야', 'ㅒ': '얘', 'ㅓ': '어',
+    'ㅔ': '에', 'ㅕ': '여', 'ㅖ': '예', 'ㅗ': '오', 'ㅘ': '와',
+    'ㅙ': '왜', 'ㅚ': '외', 'ㅛ': '요', 'ㅜ': '우', 'ㅝ': '워',
+    'ㅞ': '웨', 'ㅟ': '위', 'ㅠ': '유', 'ㅡ': '으', 'ㅢ': '의',
+    'ㅣ': '이',
+}
+
+
+def convert_jamo_to_pronunciation(text: str) -> str:
+    """
+    한글 자모(초성/모음)를 발음으로 변환
+
+    예: ㅋㅋㅋ -> 크크크, ㅎㅎ -> 흐흐
+
+    Args:
+        text: 원본 텍스트
+
+    Returns:
+        자모가 발음으로 변환된 텍스트
+    """
+    result = []
+    for char in text:
+        if char in CHOSEONG_TO_PRONUNCIATION:
+            result.append(CHOSEONG_TO_PRONUNCIATION[char])
+        elif char in JUNGSEONG_TO_PRONUNCIATION:
+            result.append(JUNGSEONG_TO_PRONUNCIATION[char])
+        else:
+            result.append(char)
+    return ''.join(result)
+
 
 def preprocess_text_for_tts(text: str) -> str:
     """
@@ -74,6 +114,9 @@ def preprocess_text_for_tts(text: str) -> str:
 
     # 유니코드 이모지 제거
     text = EMOJI_PATTERN.sub('', text)
+
+    # 한글 자모(초성/모음)를 발음으로 변환 (예: ㅋㅋㅋ -> 크크크)
+    text = convert_jamo_to_pronunciation(text)
 
     # 연속된 공백 정리
     text = re.sub(r'\s+', ' ', text).strip()
@@ -101,12 +144,7 @@ class TTSQueueItem:
 AVAILABLE_VOICES = {
     'sunhi': ('ko-KR-SunHiNeural', '선히 (여성)'),
     'injoon': ('ko-KR-InJoonNeural', '인준 (남성)'),
-    'bongjin': ('ko-KR-BongJinNeural', '봉진 (남성)'),
-    'gookmin': ('ko-KR-GookMinNeural', '국민 (남성)'),
-    'jimin': ('ko-KR-JiMinNeural', '지민 (여성)'),
-    'seohyeon': ('ko-KR-SeoHyeonNeural', '서현 (여성)'),
-    'soonbok': ('ko-KR-SoonBokNeural', '순복 (여성)'),
-    'yujin': ('ko-KR-YuJinNeural', '유진 (여성)'),
+    'hyunsu': ('ko-KR-HyunsuMultilingualNeural', '현수 (남성)'),
 }
 
 # 기본 보이스
@@ -283,8 +321,27 @@ class TTSManager:
             logger.info(f"TTS 재생 완료: '{processed_text}'")
 
         except NoAudioReceived:
-            # 텍스트를 음성으로 변환할 수 없는 경우 (특수문자만 있는 등)
-            logger.warning(f"TTS 변환 불가 (NoAudioReceived): '{processed_text}'")
+            # 현재 보이스로 변환 실패 시 기본 보이스로 재시도
+            if voice_id != DEFAULT_VOICE:
+                logger.warning(f"TTS 변환 실패 (NoAudioReceived), 기본 보이스로 재시도: '{processed_text}'")
+                try:
+                    communicate = edge_tts.Communicate(processed_text, DEFAULT_VOICE)
+                    await communicate.save(temp_filename)
+
+                    if voice_client.is_playing():
+                        voice_client.stop()
+
+                    audio_source = discord.FFmpegPCMAudio(temp_filename)
+                    voice_client.play(audio_source)
+
+                    while voice_client.is_playing():
+                        await asyncio.sleep(0.1)
+
+                    logger.info(f"TTS 재생 완료 (fallback): '{processed_text}'")
+                except NoAudioReceived:
+                    logger.warning(f"TTS 변환 불가 (NoAudioReceived): '{processed_text}'")
+            else:
+                logger.warning(f"TTS 변환 불가 (NoAudioReceived): '{processed_text}'")
 
         except Exception as e:
             logger.error(f"TTS 재생 중 에러: {e}", exc_info=True)
