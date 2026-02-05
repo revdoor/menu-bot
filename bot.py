@@ -23,7 +23,7 @@ from discord.ext import commands
 
 from menu_collector import get_menus_by_meal_type, format_menu_for_discord
 from sticker_stats import parse_channels, StickerAnalyzer, create_sticker_embed
-from tts_manager import TTSManager
+from tts_manager import TTSManager, AVAILABLE_VOICES
 from menu_voting import (
     VotingManager,
     VotingSession,
@@ -54,6 +54,7 @@ logger = logging.getLogger(__name__)
 
 async def health_check(request: web.Request) -> web.Response:
     """헬스체크 엔드포인트"""
+
     return web.Response(text="OK", status=200)
 
 
@@ -190,8 +191,8 @@ async def on_message(message: discord.Message) -> None:
     if not message.content.strip() or message.content.startswith('/'):
         return
 
-    # 큐에 추가 및 재생
-    session.add_to_queue(message.content)
+    # 큐에 추가 및 재생 (사용자 ID 포함)
+    session.add_to_queue(message.content, message.author.id)
 
     # 재생 중이 아니면 재생 시작
     if session.is_connected() and not session.is_playing():
@@ -328,9 +329,16 @@ async def sticker_check(
 # ==================== TTS Commands ====================
 
 @bot.tree.command(name='tts시작', description='음성 채널에 참가하여 특정 채널의 메시지를 TTS로 읽어줍니다')
-@app_commands.describe(채널='TTS로 읽을 텍스트 채널')
+@app_commands.describe(
+    채널='TTS로 읽을 텍스트 채널',
+    보이스설정채널='사용자별 보이스 설정을 저장하는 채널 (선택)'
+)
 @handle_interaction_errors
-async def tts_start(interaction: discord.Interaction, 채널: discord.TextChannel) -> None:
+async def tts_start(
+    interaction: discord.Interaction,
+    채널: discord.TextChannel,
+    보이스설정채널: discord.TextChannel = None
+) -> None:
     """TTS 시작 명령어"""
     await interaction.response.defer()
 
@@ -360,7 +368,13 @@ async def tts_start(interaction: discord.Interaction, 채널: discord.TextChanne
         return
 
     # TTS 세션 생성
-    tts_manager.create_session(guild_id, voice_client, 채널.id)
+    voice_config_channel_id = 보이스설정채널.id if 보이스설정채널 else None
+    tts_manager.create_session(guild_id, voice_client, 채널.id, voice_config_channel_id)
+
+    # 보이스 설정 로드 (설정 채널이 지정된 경우)
+    loaded_count = 0
+    if 보이스설정채널:
+        loaded_count = await tts_manager.load_voice_settings(guild_id, 보이스설정채널)
 
     # 안내 메시지
     embed = discord.Embed(
@@ -370,14 +384,19 @@ async def tts_start(interaction: discord.Interaction, 채널: discord.TextChanne
     )
     embed.add_field(name="음성 채널", value=voice_channel.mention, inline=True)
     embed.add_field(name="TTS 채널", value=채널.mention, inline=True)
-    embed.add_field(
-        name="ℹ️ 사용 방법",
-        value=f"{채널.mention} 채널에 메시지를 입력하면 TTS로 읽어줍니다.\n종료하려면 `/tts종료` 명령어를 사용하세요.",
-        inline=False
-    )
+
+    if 보이스설정채널:
+        embed.add_field(name="보이스 설정 채널", value=보이스설정채널.mention, inline=True)
+        embed.add_field(name="로드된 보이스 설정", value=f"{loaded_count}개", inline=True)
+
+    usage_text = f"{채널.mention} 채널에 메시지를 입력하면 TTS로 읽어줍니다.\n종료하려면 `/tts종료` 명령어를 사용하세요."
+    if 보이스설정채널:
+        usage_text += f"\n보이스 변경: `/tts보이스` 명령어를 사용하세요."
+
+    embed.add_field(name="ℹ️ 사용 방법", value=usage_text, inline=False)
 
     await interaction.followup.send(embed=embed)
-    logger.info(f"TTS 시작: 서버={interaction.guild.name}, 음성채널={voice_channel.name}, TTS채널={채널.name}")
+    logger.info(f"TTS 시작: 서버={interaction.guild.name}, 음성채널={voice_channel.name}, TTS채널={채널.name}, 보이스설정채널={보이스설정채널.name if 보이스설정채널 else 'None'}")
 
 
 @bot.tree.command(name='tts종료', description='TTS를 종료하고 음성 채널에서 나갑니다')
@@ -398,6 +417,54 @@ async def tts_stop(interaction: discord.Interaction) -> None:
 
     await interaction.followup.send("✅ TTS를 종료했습니다!")
     logger.info(f"TTS 종료: 서버={interaction.guild.name}")
+
+
+# TTS 보이스 선택 choices 생성
+def _create_voice_choices() -> list[app_commands.Choice[str]]:
+    """사용 가능한 보이스 목록을 Choice 리스트로 변환"""
+    return [
+        app_commands.Choice(name=display_name, value=key)
+        for key, (voice_id, display_name) in AVAILABLE_VOICES.items()
+    ]
+
+
+@bot.tree.command(name='tts보이스', description='TTS 보이스를 변경합니다')
+@app_commands.describe(보이스='사용할 보이스')
+@app_commands.choices(보이스=_create_voice_choices())
+@handle_interaction_errors
+async def tts_voice(interaction: discord.Interaction, 보이스: app_commands.Choice[str]) -> None:
+    """TTS 보이스 변경 명령어"""
+    guild_id = interaction.guild.id
+    user_id = interaction.user.id
+    voice_key = 보이스.value
+
+    # 세션 확인
+    session = tts_manager.get_session(guild_id)
+    if not session:
+        await interaction.response.send_message("❌ 실행 중인 TTS가 없습니다!", ephemeral=True)
+        return
+
+    # 보이스 정보 가져오기
+    if voice_key not in AVAILABLE_VOICES:
+        await interaction.response.send_message("❌ 유효하지 않은 보이스입니다!", ephemeral=True)
+        return
+
+    voice_id, display_name = AVAILABLE_VOICES[voice_key]
+
+    # 세션 캐시에 보이스 설정 저장
+    session.set_user_voice(user_id, voice_id)
+
+    # 설정 채널이 있으면 채널에도 저장
+    if session.voice_config_channel_id:
+        config_channel = interaction.guild.get_channel(session.voice_config_channel_id)
+        if config_channel:
+            await tts_manager.save_voice_setting(config_channel, user_id, voice_key)
+
+    await interaction.response.send_message(
+        f"✅ TTS 보이스가 **{display_name}**으로 변경되었습니다!",
+        ephemeral=True
+    )
+    logger.info(f"TTS 보이스 변경: 사용자={interaction.user.name}, 보이스={display_name}")
 
 
 # ==================== Menu Voting Commands ====================
