@@ -144,7 +144,7 @@ class TTSSession:
         """재생 큐에 텍스트 추가"""
         item = TTSQueueItem(text, user_id)
         self.queue.append(item)
-        logger.debug(f"TTS 큐에 추가: '{text}' (user={user_id}, 큐 크기: {len(self.queue)})")
+        logger.info(f"TTS 큐에 추가: '{text}' (user={user_id}, 큐 크기: {len(self.queue)})")
 
     def is_playing(self) -> bool:
         """현재 재생 중인지 확인"""
@@ -226,6 +226,7 @@ class TTSManager:
                 item = session.queue.pop(0)
                 # 사용자별 보이스 설정 조회
                 voice_id = session.get_user_voice(item.user_id)
+                logger.info(f"TTS 재생 시작: user={item.user_id}, voice={voice_id}, text='{item.text}'")
                 await TTSManager._play_tts(session.voice_client, item.text, voice_id)
 
     @staticmethod
@@ -248,14 +249,16 @@ class TTSManager:
 
         # 텍스트 전처리 (이모지 제거, URL 대체)
         processed_text = preprocess_text_for_tts(text)
+        logger.info(f"TTS 전처리: '{text}' -> '{processed_text}'")
+
         if not processed_text:
-            logger.debug(f"전처리 후 빈 텍스트, 건너뜀: '{text}'")
+            logger.info(f"전처리 후 빈 텍스트, 건너뜀: '{text}'")
             return
 
         temp_filename = None
 
         try:
-            logger.debug(f"TTS 생성 중: '{processed_text}' (원본: '{text}', voice={voice_id})")
+            logger.info(f"TTS 생성 시작: '{processed_text}' (voice={voice_id})")
 
             # 임시 파일 경로 생성
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
@@ -277,11 +280,11 @@ class TTSManager:
             while voice_client.is_playing():
                 await asyncio.sleep(0.1)
 
-            logger.debug(f"TTS 재생 완료: '{text}'")
+            logger.info(f"TTS 재생 완료: '{processed_text}'")
 
         except NoAudioReceived:
             # 텍스트를 음성으로 변환할 수 없는 경우 (특수문자만 있는 등)
-            logger.debug(f"TTS 변환 불가 텍스트, 건너뜀: '{processed_text}'")
+            logger.warning(f"TTS 변환 불가 (NoAudioReceived): '{processed_text}'")
 
         except Exception as e:
             logger.error(f"TTS 재생 중 에러: {e}", exc_info=True)
