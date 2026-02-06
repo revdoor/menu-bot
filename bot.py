@@ -199,6 +199,49 @@ async def on_message(message: discord.Message) -> None:
         asyncio.create_task(tts_manager.play_queue(guild_id))
 
 
+@bot.event
+async def on_voice_state_update(
+    member: discord.Member,
+    before: discord.VoiceState,
+    after: discord.VoiceState
+) -> None:
+    """음성 상태 변경 이벤트 - TTS 자동 재연결 및 빈 채널 종료"""
+    guild_id = member.guild.id
+    session = tts_manager.get_session(guild_id)
+
+    if not session:
+        return
+
+    # 봇 자신의 상태 변경: 연결 끊김 시 재연결
+    if member.id == bot.user.id:
+        if before.channel and not after.channel:
+            logger.info(f"TTS 연결 끊김 감지 (guild={guild_id}), 재연결 시도...")
+
+            await asyncio.sleep(1)
+
+            try:
+                voice_client = await before.channel.connect()
+                session.voice_client = voice_client
+                logger.info(f"TTS 자동 재연결 성공 (guild={guild_id}, channel={before.channel.name})")
+
+                if session.queue and not session.is_playing():
+                    asyncio.create_task(tts_manager.play_queue(guild_id))
+
+            except Exception as e:
+                logger.error(f"TTS 자동 재연결 실패 (guild={guild_id}): {e}")
+                tts_manager.remove_session(guild_id)
+        return
+
+    # 다른 멤버가 음성 채널에서 나간 경우: 빈 채널이면 종료
+    if before.channel and session.voice_client and session.voice_client.channel == before.channel:
+        # 봇을 제외한 멤버 수 확인
+        members_in_channel = [m for m in before.channel.members if not m.bot]
+
+        if len(members_in_channel) == 0:
+            logger.info(f"음성 채널에 아무도 없음, TTS 종료 (guild={guild_id})")
+            await tts_manager.disconnect_session(guild_id)
+
+
 # ==================== Menu Commands ====================
 
 @bot.tree.command(name='메뉴', description='오늘의 식단을 보여줍니다')

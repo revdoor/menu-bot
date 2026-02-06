@@ -51,6 +51,9 @@ EMOJI_PATTERN = re.compile(
 # Discord 커스텀 이모지 패턴 <:name:id> 또는 <a:name:id>
 DISCORD_EMOJI_PATTERN = re.compile(r'<a?:\w+:\d+>')
 
+# 일본어 감지 패턴 (히라가나, 가타카나)
+JAPANESE_PATTERN = re.compile(r'[\u3040-\u309F\u30A0-\u30FF]')
+
 # 한글 초성 -> 발음 매핑
 CHOSEONG_TO_PRONUNCIATION = {
     'ㄱ': '그', 'ㄲ': '끄', 'ㄴ': '느', 'ㄷ': '드', 'ㄸ': '뜨',
@@ -121,8 +124,8 @@ def preprocess_text_for_tts(text: str) -> str:
     # 연속된 공백 정리
     text = re.sub(r'\s+', ' ', text).strip()
 
-    # 읽을 수 있는 문자(한글, 영문, 숫자)가 있는지 확인
-    if not re.search(r'[가-힣a-zA-Z0-9]', text):
+    # 읽을 수 있는 문자(한글, 영문, 숫자, 일본어, 한자)가 있는지 확인
+    if not re.search(r'[가-힣a-zA-Z0-9\u3040-\u309F\u30A0-\u30FF\u4E00-\u9FFF]', text):
         return ''
 
     return text
@@ -140,15 +143,25 @@ class TTSQueueItem:
 
 
 # 사용 가능한 보이스 목록 (voice_id, 표시명)
-# edge-tts 한국어 보이스
+# edge-tts 한국어/일본어 보이스
 AVAILABLE_VOICES = {
+    # 한국어
     'sunhi': ('ko-KR-SunHiNeural', '선히 (여성)'),
     'injoon': ('ko-KR-InJoonNeural', '인준 (남성)'),
     'hyunsu': ('ko-KR-HyunsuMultilingualNeural', '현수 (남성)'),
+    # 일본어
+    'nanami': ('ja-JP-NanamiNeural', '나나미 (여성)'),
+    'keita': ('ja-JP-KeitaNeural', '케이타 (남성)'),
 }
 
 # 기본 보이스
 DEFAULT_VOICE = 'ko-KR-SunHiNeural'
+DEFAULT_JAPANESE_VOICE = 'ja-JP-NanamiNeural'
+
+
+def is_japanese_text(text: str) -> bool:
+    """텍스트에 일본어(히라가나/가타카나)가 포함되어 있는지 확인"""
+    return bool(JAPANESE_PATTERN.search(text))
 
 
 class TTSSession:
@@ -182,7 +195,6 @@ class TTSSession:
         """재생 큐에 텍스트 추가"""
         item = TTSQueueItem(text, user_id)
         self.queue.append(item)
-        logger.info(f"TTS 큐에 추가: '{text}' (user={user_id}, 큐 크기: {len(self.queue)})")
 
     def is_playing(self) -> bool:
         """현재 재생 중인지 확인"""
@@ -264,7 +276,6 @@ class TTSManager:
                 item = session.queue.pop(0)
                 # 사용자별 보이스 설정 조회
                 voice_id = session.get_user_voice(item.user_id)
-                logger.info(f"TTS 재생 시작: user={item.user_id}, voice={voice_id}, text='{item.text}'")
                 await TTSManager._play_tts(session.voice_client, item.text, voice_id)
 
     @staticmethod
@@ -285,19 +296,23 @@ class TTSManager:
             logger.warning(f"음성 클라이언트가 연결되지 않음")
             return
 
-        # 텍스트 전처리 (이모지 제거, URL 대체)
+        # 텍스트 전처리 (이모지 제거, URL 대체, 자모 변환)
         processed_text = preprocess_text_for_tts(text)
-        logger.info(f"TTS 전처리: '{text}' -> '{processed_text}'")
+
+        # 전처리 결과가 다를 때만 로그
+        if processed_text != text:
+            logger.info(f"TTS: '{text}' -> '{processed_text}'")
 
         if not processed_text:
-            logger.info(f"전처리 후 빈 텍스트, 건너뜀: '{text}'")
             return
+
+        # 일본어 텍스트면 일본어 보이스로 전환
+        if is_japanese_text(processed_text) and not voice_id.startswith('ja-'):
+            voice_id = DEFAULT_JAPANESE_VOICE
 
         temp_filename = None
 
         try:
-            logger.info(f"TTS 생성 시작: '{processed_text}' (voice={voice_id})")
-
             # 임시 파일 경로 생성
             with tempfile.NamedTemporaryFile(delete=False, suffix='.mp3') as fp:
                 temp_filename = fp.name
@@ -318,8 +333,6 @@ class TTSManager:
             while voice_client.is_playing():
                 await asyncio.sleep(0.1)
 
-            logger.info(f"TTS 재생 완료: '{processed_text}'")
-
         except NoAudioReceived:
             # 현재 보이스로 변환 실패 시 기본 보이스로 재시도
             if voice_id != DEFAULT_VOICE:
@@ -336,8 +349,6 @@ class TTSManager:
 
                     while voice_client.is_playing():
                         await asyncio.sleep(0.1)
-
-                    logger.info(f"TTS 재생 완료 (fallback): '{processed_text}'")
                 except NoAudioReceived:
                     logger.warning(f"TTS 변환 불가 (NoAudioReceived): '{processed_text}'")
             else:
