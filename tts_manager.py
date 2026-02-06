@@ -379,10 +379,14 @@ class TTSManager:
         if not session:
             return False
 
-        if session.voice_client and session.voice_client.is_connected():
-            await session.voice_client.disconnect()
+        voice_client = session.voice_client
 
+        # 세션 먼저 제거 (on_voice_state_update에서 재연결 방지)
         self.remove_session(guild_id)
+
+        if voice_client and voice_client.is_connected():
+            await voice_client.disconnect()
+
         return True
 
     async def load_voice_settings(
