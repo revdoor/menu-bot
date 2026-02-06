@@ -446,7 +446,8 @@ async def tts_start(
 @handle_interaction_errors
 async def tts_stop(interaction: discord.Interaction) -> None:
     """TTS 종료 명령어"""
-    await interaction.response.defer()
+    if not interaction.response.is_done():
+        await interaction.response.defer()
 
     guild_id = interaction.guild.id
 
