@@ -475,24 +475,20 @@ async def tts_stop(interaction: discord.Interaction) -> None:
     session = tts_manager.get_session(guild_id)
     voice_client = interaction.guild.voice_client
 
-    # 세션도 없고 음성 연결도 없으면
-    if not session and not voice_client:
-        # 마지막 설정 정보도 삭제
-        tts_manager.clear_last_config(guild_id)
-        await interaction.followup.send("❌ 실행 중인 TTS가 없습니다!")
-        return
-
-    # 세션 종료
-    if session:
-        await tts_manager.disconnect_session(guild_id)
-    # 세션 없이 음성 연결만 있는 경우
-    elif voice_client and voice_client.is_connected():
-        await voice_client.disconnect()
-
-    # 마지막 설정 정보도 삭제
+    # 1) 설정 정보 삭제
     tts_manager.clear_last_config(guild_id)
 
-    await interaction.followup.send("✅ TTS를 종료했습니다!")
+    # 2) 세션이 없으면 경고
+    if not session:
+        await interaction.followup.send("⚠️ 실행 중인 TTS 세션이 없습니다.")
+    else:
+        # 3) 세션 종료
+        await tts_manager.disconnect_session(guild_id)
+        await interaction.followup.send("✅ TTS를 종료했습니다!")
+
+    # 4) 채널에 연결되어 있으면 내보내기
+    if voice_client and voice_client.is_connected():
+        await voice_client.disconnect()
     logger.info(f"TTS 종료: 서버={interaction.guild.name}")
 
 
