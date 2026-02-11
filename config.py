@@ -86,4 +86,6 @@ def setup_logging(level: int = LOG_LEVEL) -> None:
     # 외부 라이브러리 로그 레벨 조정 (노이즈 감소)
     logging.getLogger('discord').setLevel(logging.WARNING)
     logging.getLogger('discord.http').setLevel(logging.WARNING)
+    logging.getLogger('discord.player').setLevel(logging.WARNING)
+    logging.getLogger('discord.voice_state').setLevel(logging.WARNING)
     logging.getLogger('aiohttp').setLevel(logging.WARNING)
