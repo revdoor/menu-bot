@@ -13,6 +13,7 @@ import logging
 import tempfile
 import asyncio
 import subprocess
+from dataclasses import dataclass
 from typing import Dict, Optional
 
 import discord
@@ -133,13 +134,16 @@ def preprocess_text_for_tts(text: str) -> str:
 # 로거 설정
 logger = logging.getLogger(__name__)
 
+# 상수
+VOICE_CONFIG_HISTORY_LIMIT = 100  # 보이스 설정 로드 시 읽을 메시지 수
+PLAY_POLL_INTERVAL = 0.1  # 재생 완료 대기 시 폴링 간격 (초)
 
+
+@dataclass
 class TTSQueueItem:
     """TTS 큐 아이템 - 텍스트와 사용자 정보를 함께 저장"""
-
-    def __init__(self, text: str, user_id: int):
-        self.text = text
-        self.user_id = user_id
+    text: str
+    user_id: int
 
 
 # 사용 가능한 보이스 목록 (voice_id, 표시명)
@@ -299,6 +303,27 @@ class TTSManager:
                 await TTSManager._play_tts(session.voice_client, item.text, voice_id)
 
     @staticmethod
+    async def _play_audio_file(
+        voice_client: discord.VoiceClient,
+        filepath: str
+    ) -> None:
+        """
+        오디오 파일을 재생하고 완료될 때까지 대기
+
+        Args:
+            voice_client: Discord 음성 클라이언트
+            filepath: 재생할 오디오 파일 경로
+        """
+        if voice_client.is_playing():
+            voice_client.stop()
+
+        audio_source = discord.FFmpegPCMAudio(filepath, options='-loglevel quiet')
+        voice_client.play(audio_source)
+
+        while voice_client.is_playing():
+            await asyncio.sleep(PLAY_POLL_INTERVAL)
+
+    @staticmethod
     async def _play_tts(
         voice_client: discord.VoiceClient,
         text: str,
@@ -313,7 +338,7 @@ class TTSManager:
             voice_id: edge-tts 보이스 ID (기본값: ko-KR-SunHiNeural)
         """
         if not voice_client or not voice_client.is_connected():
-            logger.warning(f"음성 클라이언트가 연결되지 않음")
+            logger.warning("음성 클라이언트가 연결되지 않음")
             return
 
         # 텍스트 전처리 (이모지 제거, URL 대체, 자모 변환)
@@ -341,17 +366,8 @@ class TTSManager:
             communicate = edge_tts.Communicate(processed_text, voice_id)
             await communicate.save(temp_filename)
 
-            # 이전 재생 중지
-            if voice_client.is_playing():
-                voice_client.stop()
-
             # 재생
-            audio_source = discord.FFmpegPCMAudio(temp_filename, options='-loglevel quiet')
-            voice_client.play(audio_source)
-
-            # 재생 완료 대기
-            while voice_client.is_playing():
-                await asyncio.sleep(0.1)
+            await TTSManager._play_audio_file(voice_client, temp_filename)
 
         except NoAudioReceived:
             # 현재 보이스로 변환 실패 시 기본 보이스로 재시도
@@ -360,15 +376,7 @@ class TTSManager:
                 try:
                     communicate = edge_tts.Communicate(processed_text, DEFAULT_VOICE)
                     await communicate.save(temp_filename)
-
-                    if voice_client.is_playing():
-                        voice_client.stop()
-
-                    audio_source = discord.FFmpegPCMAudio(temp_filename, options='-loglevel quiet')
-                    voice_client.play(audio_source)
-
-                    while voice_client.is_playing():
-                        await asyncio.sleep(0.1)
+                    await TTSManager._play_audio_file(voice_client, temp_filename)
                 except NoAudioReceived:
                     logger.warning(f"TTS 변환 불가 (NoAudioReceived): '{processed_text}'")
             else:
@@ -382,8 +390,8 @@ class TTSManager:
             if temp_filename:
                 try:
                     os.remove(temp_filename)
-                except:
-                    pass
+                except OSError as e:
+                    logger.debug(f"임시 파일 삭제 실패: {e}")
 
     async def disconnect_session(self, guild_id: int) -> bool:
         """
@@ -437,8 +445,8 @@ class TTSManager:
         user_settings: Dict[int, str] = {}
 
         try:
-            # 채널의 메시지를 읽어서 설정 파싱 (최근 100개)
-            async for message in config_channel.history(limit=100):
+            # 채널의 메시지를 읽어서 설정 파싱
+            async for message in config_channel.history(limit=VOICE_CONFIG_HISTORY_LIMIT):
                 content = message.content.strip()
                 if '|' not in content:
                     continue
