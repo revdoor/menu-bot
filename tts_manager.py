@@ -346,7 +346,7 @@ class TTSManager:
                 voice_client.stop()
 
             # 재생
-            audio_source = discord.FFmpegPCMAudio(temp_filename, stderr=subprocess.DEVNULL)
+            audio_source = discord.FFmpegPCMAudio(temp_filename, options='-loglevel quiet')
             voice_client.play(audio_source)
 
             # 재생 완료 대기
@@ -364,7 +364,7 @@ class TTSManager:
                     if voice_client.is_playing():
                         voice_client.stop()
 
-                    audio_source = discord.FFmpegPCMAudio(temp_filename, stderr=subprocess.DEVNULL)
+                    audio_source = discord.FFmpegPCMAudio(temp_filename, options='-loglevel quiet')
                     voice_client.play(audio_source)
 
                     while voice_client.is_playing():
