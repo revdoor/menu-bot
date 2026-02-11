@@ -265,6 +265,11 @@ class TTSManager:
         """마지막 TTS 설정 반환"""
         return self._last_config.get(guild_id)
 
+    def clear_last_config(self, guild_id: int) -> None:
+        """마지막 TTS 설정 삭제"""
+        if guild_id in self._last_config:
+            del self._last_config[guild_id]
+
     def remove_session(self, guild_id: int) -> None:
         """
         세션 제거
