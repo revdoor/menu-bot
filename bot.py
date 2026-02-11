@@ -174,14 +174,36 @@ async def on_message(message: discord.Message) -> None:
     if message.author.bot:
         return
 
-    # TTS 세션 확인
+    # 길드 확인
     guild_id = message.guild.id if message.guild else None
     if not guild_id:
         return
 
     session = tts_manager.get_session(guild_id)
+
+    # 세션이 없으면 마지막 설정으로 자동 재생성 시도
     if not session:
-        return
+        last_config = tts_manager.get_last_config(guild_id)
+        if not last_config or message.channel.id != last_config['channel_id']:
+            return
+
+        # 음성 채널 찾기
+        voice_channel = message.guild.get_channel(last_config['voice_channel_id'])
+        if not voice_channel:
+            return
+
+        try:
+            voice_client = await voice_channel.connect()
+            session = tts_manager.create_session(
+                guild_id,
+                voice_client,
+                last_config['channel_id'],
+                last_config['voice_config_channel_id']
+            )
+            logger.info(f"TTS 세션 자동 재생성 (guild={guild_id})")
+        except Exception as e:
+            logger.error(f"TTS 세션 자동 재생성 실패: {e}")
+            return
 
     # TTS 채널인지 확인
     if message.channel.id != session.channel_id:

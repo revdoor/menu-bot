@@ -214,6 +214,9 @@ class TTSManager:
 
     def __init__(self):
         self._sessions: Dict[int, TTSSession] = {}
+        # 마지막 TTS 설정 저장 (세션 재생성용)
+        # {guild_id: {'channel_id': int, 'voice_channel_id': int, 'voice_config_channel_id': int|None}}
+        self._last_config: Dict[int, dict] = {}
 
     def get_session(self, guild_id: int) -> Optional[TTSSession]:
         """
@@ -248,7 +251,19 @@ class TTSManager:
         """
         session = TTSSession(voice_client, channel_id, voice_config_channel_id)
         self._sessions[guild_id] = session
+
+        # 마지막 설정 저장 (세션 재생성용)
+        self._last_config[guild_id] = {
+            'channel_id': channel_id,
+            'voice_channel_id': voice_client.channel.id,
+            'voice_config_channel_id': voice_config_channel_id,
+        }
+
         return session
+
+    def get_last_config(self, guild_id: int) -> Optional[dict]:
+        """마지막 TTS 설정 반환"""
+        return self._last_config.get(guild_id)
 
     def remove_session(self, guild_id: int) -> None:
         """
