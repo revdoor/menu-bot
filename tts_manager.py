@@ -433,9 +433,6 @@ class TTSManager:
         try:
             # 채널의 메시지를 읽어서 설정 파싱 (최근 100개)
             async for message in config_channel.history(limit=100):
-                if message.author.bot:
-                    continue
-
                 content = message.content.strip()
                 if '|' not in content:
                     continue
