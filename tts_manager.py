@@ -401,8 +401,9 @@ class TTSManager:
 
         voice_client = session.voice_client
 
-        # 세션 먼저 제거 (on_voice_state_update에서 재연결 방지)
+        # 세션 및 설정 제거 (on_voice_state_update에서 재연결 방지)
         self.remove_session(guild_id)
+        self.clear_last_config(guild_id)
 
         if voice_client and voice_client.is_connected():
             await voice_client.disconnect()
